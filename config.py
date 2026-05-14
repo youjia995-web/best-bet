@@ -1,11 +1,17 @@
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'odds_monitor.db')}"
+DATA_DIR = os.environ.get("DATA_DIR", BASE_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    f"sqlite:///{os.path.join(DATA_DIR, 'odds_monitor.db')}",
+)
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 REFRESH_INTERVAL = 60  # seconds（对标原站）
 REST_HOURS = []  # e.g. [0, 1, 2, 3, 4, 5, 6] to rest during midnight
-DATA_SOURCE_STATE_FILE = os.path.join(BASE_DIR, "data_source_state.json")
+DATA_SOURCE_STATE_FILE = os.path.join(DATA_DIR, "data_source_state.json")
 DEFAULT_DATA_SOURCE = "20002028"
 
 # 回测筛选阈值
@@ -26,7 +32,7 @@ RETRY_BACKOFF = [1, 2, 4]  # 重试间隔秒数（指数退避）
 # 免费注册后把 key 放到环境变量 ODDS_API_IO_KEY，或放到本项目根目录 odds_api_io.key。
 SPORTTERY_API_BASE = "https://webapi.sporttery.cn"
 ODDS_API_IO_BASE = "https://api.odds-api.io/v3"
-ODDS_API_IO_KEY_FILE = os.path.join(BASE_DIR, "odds_api_io.key")
+ODDS_API_IO_KEY_FILE = os.path.join(DATA_DIR, "odds_api_io.key")
 ODDS_API_IO_KEY = (
     os.environ.get("ODDS_API_IO_KEY", "").strip()
     or (
@@ -38,7 +44,7 @@ ODDS_API_IO_KEY = (
 ODDS_API_IO_BOOKMAKERS = os.environ.get("ODDS_API_IO_BOOKMAKERS", "Bet365,Unibet").strip()
 ODDS_API_IO_EVENT_LIMIT = int(os.environ.get("ODDS_API_IO_EVENT_LIMIT", "120"))
 ODDS_API_IO_CACHE_TTL = int(os.environ.get("ODDS_API_IO_CACHE_TTL", "60"))
-ODDS_API_IO_STATE_FILE = os.path.join(BASE_DIR, "odds_api_io_state.json")
+ODDS_API_IO_STATE_FILE = os.path.join(DATA_DIR, "odds_api_io_state.json")
 ODDS_API_IO_FREE_REQUESTS_PER_HOUR = int(os.environ.get("ODDS_API_IO_FREE_REQUESTS_PER_HOUR", "100"))
 ODDS_API_IO_REQUEST_RESERVE = int(os.environ.get("ODDS_API_IO_REQUEST_RESERVE", "10"))
 ODDS_API_IO_MIN_INTERVAL = int(os.environ.get("ODDS_API_IO_MIN_INTERVAL", "180"))

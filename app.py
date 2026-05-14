@@ -1,6 +1,7 @@
 """足球竞彩赔率实时监控系统 — FastAPI 主应用"""
 import json
 import datetime
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Form, Depends
@@ -17,6 +18,7 @@ from collector import (
 )
 from value_detector import detect_value_bets
 from config import (ADMIN_PASSWORD, REFRESH_INTERVAL,
+                    BASE_DIR,
                     BACKTEST_2X1_MAX_HUANGG, SINGLE_BET_MAX_HUANGG,
                     FALL_BET_MAX_HUANGG, FALL_BET_MIN_CHANGE, REST_HOURS)
 
@@ -58,7 +60,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    with open("static/index.html", encoding="utf-8") as f:
+    with open(os.path.join(BASE_DIR, "static", "index.html"), encoding="utf-8") as f:
         return f.read()
 
 
