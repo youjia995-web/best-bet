@@ -33,6 +33,8 @@ uvicorn app:app --host 0.0.0.0 --port $PORT
 - `ODDS_API_IO_EVENT_LIMIT=300`
 - `ODDS_API_IO_BOOKMAKERS=Bet365,Unibet`
 
+如果 Zeabur 日志出现 `体彩竞彩接口 HTTP 567 Unknown Status`，通常是云端 IP 访问体彩官网接口被网关拦截。当前版本会自动改用主接口的竞彩赛程，再继续匹配 Odds-API.io 欧赔；如果主接口也不可用，可以临时把 `DEFAULT_DATA_SOURCE` 改为 `20002028` 只跑主接口。
+
 ### 3. 挂载持久化 Volume
 
 这个项目默认使用 SQLite。为了避免 Zeabur 重启或重新部署后丢失数据库，请给服务添加 Volume，并挂载到：

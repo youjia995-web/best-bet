@@ -33,7 +33,7 @@ SOURCE_OPTIONS = {
     },
     "odds_api_io": {
         "name": "备用接口",
-        "description": "体彩竞彩 + Odds-API.io 欧赔",
+        "description": "竞彩赛程 + Odds-API.io 欧赔",
         "requires_key": True,
     },
     "mock": {
@@ -686,6 +686,23 @@ def _pick_event_field(event, *names):
     return ""
 
 
+def _pick_source_field(row, *names):
+    for name in names:
+        value = row.get(name)
+        if value not in ("", None):
+            return value
+    return ""
+
+
+def _to_decimal(value):
+    if value in ("", None):
+        return None
+    try:
+        return round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_event(event, idx):
     home = _pick_event_field(event, "home_team", "homeTeam", "home", "team_home", "participant1")
     away = _pick_event_field(event, "away_team", "awayTeam", "away", "team_away", "participant2")
@@ -1014,6 +1031,57 @@ def fetch_from_sporttery_jingcai():
     return matches
 
 
+def _jingcai_match_from_20002028(row):
+    had = {
+        "home": _to_decimal(_pick_source_field(row, "jingcai_home", "jc_home", "home_jingcai", "spf_home")),
+        "draw": _to_decimal(_pick_source_field(row, "jingcai_draw", "jc_draw", "draw_jingcai", "spf_draw")),
+        "away": _to_decimal(_pick_source_field(row, "jingcai_away", "jc_away", "away_jingcai", "spf_away")),
+    }
+    if not all(had.values()):
+        return None
+
+    match_date = _pick_source_field(row, "real_date", "match_date", "date")
+    start_time = str(_pick_source_field(row, "start_time", "match_time", "time"))[:5]
+    match_no = str(_pick_source_field(row, "match_no", "matchNumStr", "matchNum"))
+    raw = {
+        "matchNumStr": match_no[-3:],
+        "matchNum": match_no[-3:],
+        "leagueAbbName": _pick_source_field(row, "league", "leagueAbbName", "leagueAllName"),
+        "leagueAllName": _pick_source_field(row, "league", "leagueAllName", "leagueAbbName"),
+        "homeTeamAbbName": _pick_source_field(row, "home_team", "homeTeamAbbName", "homeTeamAllName"),
+        "homeTeamAllName": _pick_source_field(row, "home_team", "homeTeamAllName", "homeTeamAbbName"),
+        "awayTeamAbbName": _pick_source_field(row, "away_team", "awayTeamAbbName", "awayTeamAllName"),
+        "awayTeamAllName": _pick_source_field(row, "away_team", "awayTeamAllName", "awayTeamAbbName"),
+        "matchDate": str(match_date)[:10],
+        "matchTime": start_time,
+        "oddsList": [{
+            "poolCode": "HAD",
+            "h": had["home"],
+            "d": had["draw"],
+            "a": had["away"],
+        }],
+    }
+    if not (raw["matchDate"] and raw["matchTime"] and raw["homeTeamAllName"] and raw["awayTeamAllName"]):
+        return None
+    return {"raw": raw, "had": had}
+
+
+def fetch_from_20002028_jingcai():
+    """Use the main source as the Jingcai match list when Sporttery is blocked."""
+    rows = fetch_from_20002028()
+    if not rows:
+        return None
+
+    matches = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item = _jingcai_match_from_20002028(row)
+        if item:
+            matches.append(item)
+    return matches or None
+
+
 def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False):
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row = {
@@ -1057,12 +1125,25 @@ def fetch_from_odds_api_io():
         print(f"  {message}")
         return None
 
+    jingcai_source_label = "体彩"
     try:
-        jingcai_matches = fetch_from_sporttery_jingcai()
+        sporttery_error = ""
+        try:
+            jingcai_matches = fetch_from_sporttery_jingcai()
+        except ExternalApiError as e:
+            sporttery_error = str(e)
+            print(f"  体彩竞彩接口不可用，改用主接口赛程匹配欧赔: {e}")
+            jingcai_matches = None
+
         if not jingcai_matches:
-            _set_odds_api_io_status("error", "体彩竞彩接口未返回可用胜平负比赛")
-            print("  体彩竞彩接口未返回可用胜平负比赛")
-            return None
+            jingcai_source_label = "主接口"
+            jingcai_matches = fetch_from_20002028_jingcai()
+            if not jingcai_matches:
+                detail = f"；体彩接口失败: {sporttery_error}" if sporttery_error else ""
+                message = f"主接口也未返回可用胜平负比赛{detail}"
+                _set_odds_api_io_status("error", message)
+                print(f"  {message}")
+                return None
 
         jingcai_only_matches = [
             _sporttery_row(jc["raw"], jc["had"])
@@ -1077,7 +1158,7 @@ def fetch_from_odds_api_io():
         ok_budget, _, budget_message = _odds_api_io_budget_available(len(event_bookmakers), now_ts)
         if not ok_budget:
             _set_odds_api_io_status("skipped", budget_message)
-            print(f"  Odds-API.io {budget_message}，本轮仅更新竞彩比赛")
+            print(f"  Odds-API.io {budget_message}，本轮仅更新{jingcai_source_label}竞彩比赛")
             return jingcai_only_matches
 
         now_utc = datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -1132,7 +1213,7 @@ def fetch_from_odds_api_io():
             seen_event_ids.add(str(event_id))
 
         if not candidates:
-            message = f"备用接口未匹配到欧赔赛事（体彩 {len(jingcai_matches)} 场，博彩公司 {_odds_api_io_bookmakers()}）"
+            message = f"备用接口未匹配到欧赔赛事（{jingcai_source_label} {len(jingcai_matches)} 场，博彩公司 {_odds_api_io_bookmakers()}）"
             _set_odds_api_io_status("error", message)
             print(f"  {message}")
             return clearable_jingcai_matches
@@ -1153,7 +1234,7 @@ def fetch_from_odds_api_io():
         ok_hourly, _, hourly_message = _odds_api_io_hourly_available(len(odds_batches))
         if not ok_hourly:
             _set_odds_api_io_status("skipped", hourly_message)
-            print(f"  Odds-API.io {hourly_message}，本轮仅更新竞彩比赛")
+            print(f"  Odds-API.io {hourly_message}，本轮仅更新{jingcai_source_label}竞彩比赛")
             return jingcai_only_matches
 
         odds_payloads_by_event_id = {}
@@ -1210,12 +1291,12 @@ def fetch_from_odds_api_io():
             _odds_api_io_cache["expires_at"] = now_ts + ODDS_API_IO_CACHE_TTL
             _set_odds_api_io_status(
                 "success",
-                f"体彩 {len(jingcai_matches)} 场，欧赔匹配 {matched_count} 场，博彩公司 {active_odds_bookmakers}，本轮约 {total_requests} 次请求",
+                f"{jingcai_source_label} {len(jingcai_matches)} 场，欧赔匹配 {matched_count} 场，博彩公司 {active_odds_bookmakers}，本轮约 {total_requests} 次请求",
                 last_success_at=time.time(),
             )
-            print(f"  备用接口采集: 体彩 {len(jingcai_matches)} 场, 欧赔匹配 {matched_count} 场, 本轮约 {total_requests} 次请求")
+            print(f"  备用接口采集: {jingcai_source_label} {len(jingcai_matches)} 场, 欧赔匹配 {matched_count} 场, 本轮约 {total_requests} 次请求")
             return matches
-        message = f"备用接口未匹配到欧赔赔率（体彩 {len(jingcai_matches)} 场，博彩公司 {_odds_api_io_bookmakers()}，本轮约 {total_requests} 次请求）"
+        message = f"备用接口未匹配到欧赔赔率（{jingcai_source_label} {len(jingcai_matches)} 场，博彩公司 {_odds_api_io_bookmakers()}，本轮约 {total_requests} 次请求）"
         _set_odds_api_io_status("error", message)
         print(f"  {message}")
         return None
