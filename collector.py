@@ -51,6 +51,8 @@ SOURCE_OPTIONS = {
 
 _odds_api_io_cache = {"expires_at": 0, "matches": None}
 CHINA_TZ = datetime.timezone(datetime.timedelta(hours=8), "Asia/Shanghai")
+OKOOO_HISTORY_DAYS = int(os.environ.get("OKOOO_HISTORY_DAYS", "1"))
+OKOOO_FUTURE_DAYS = int(os.environ.get("OKOOO_FUTURE_DAYS", "2"))
 
 
 class OddsApiBudgetError(Exception):
@@ -228,6 +230,7 @@ def collect_real_data(fetcher=fetch_from_20002028):
         updated_count = 0
         seen_keys = set()
         is_full_snapshot = any(m.get("full_snapshot") for m in matches_data)
+        preserve_missing = any(m.get("preserve_missing") for m in matches_data)
 
         for m in matches_data:
             match_no = m.get("match_no", "")
@@ -328,6 +331,7 @@ def collect_real_data(fetcher=fetch_from_20002028):
 
         if is_full_snapshot:
             cutoff = now - datetime.timedelta(hours=2)
+            stale_cutoff = now - datetime.timedelta(hours=24)
             removed_count = 0
             for match in db.query(Match).all():
                 key = (match.match_date, match.match_no, (match.start_time or "")[:5])
@@ -340,11 +344,16 @@ def collect_real_data(fetcher=fetch_from_20002028):
                     )
                 except (TypeError, ValueError):
                     continue
-                if kickoff >= cutoff:
+                if preserve_missing:
+                    should_remove = kickoff < stale_cutoff
+                else:
+                    should_remove = kickoff >= cutoff
+                if should_remove:
                     db.delete(match)
                     removed_count += 1
             if removed_count:
-                print(f"  清理非当前竞彩快照比赛: {removed_count} 场")
+                action = "清理过期历史比赛" if preserve_missing else "清理非当前竞彩快照比赛"
+                print(f"  {action}: {removed_count} 场")
 
         duplicate_groups = {}
         for match in db.query(Match).all():
@@ -1038,11 +1047,21 @@ def fetch_from_sporttery_jingcai():
     return matches
 
 
-def _okooo_request():
+def _okooo_url_for_date(day=None):
+    base = OKOOO_JINGCAI_URL.rstrip("/")
+    if not day:
+        return f"{base}/"
+    if re.search(r"/jingcai(?:/\d{4}-\d{2}-\d{2})?/?$", base):
+        base = re.sub(r"/jingcai(?:/\d{4}-\d{2}-\d{2})?/?$", "/jingcai", base)
+    return f"{base}/{day.strftime('%Y-%m-%d')}/"
+
+
+def _okooo_request(url=None):
     import ssl
 
+    url = url or _okooo_url_for_date()
     req = urllib.request.Request(
-        OKOOO_JINGCAI_URL,
+        url,
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -1057,9 +1076,9 @@ def _okooo_request():
         with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as resp:
             return resp.read().decode("gb18030", errors="replace")
     except urllib.error.HTTPError as e:
-        raise ExternalApiError(_http_error_message("澳客竞彩", OKOOO_JINGCAI_URL, e)) from e
+        raise ExternalApiError(_http_error_message("澳客竞彩", url, e)) from e
     except Exception as e:
-        raise ExternalApiError(f"澳客竞彩请求失败: {_redact_url(OKOOO_JINGCAI_URL)} | {e}") from e
+        raise ExternalApiError(f"澳客竞彩请求失败: {_redact_url(url)} | {e}") from e
 
 
 def _okooo_odd(match, wf, wz):
@@ -1094,11 +1113,9 @@ def _okooo_match_datetime(match):
     return "", (time_el.get("mtime") if time_el else "") or ""
 
 
-def fetch_from_okooo_jingcai(include_ended=False):
-    """从澳客竞彩页面提取赛程与胜平负 SP。"""
+def _parse_okooo_jingcai_html(html, include_ended=True):
     from bs4 import BeautifulSoup
 
-    html = _okooo_request()
     soup = BeautifulSoup(html, "html.parser")
     matches = []
     for item in soup.select("div.touzhu_1[data-mid]"):
@@ -1149,11 +1166,64 @@ def fetch_from_okooo_jingcai(include_ended=False):
     return matches or None
 
 
+def fetch_from_okooo_jingcai(include_ended=True):
+    """从澳客竞彩页面提取近期赛程与胜平负 SP。"""
+    today = datetime.datetime.now(CHINA_TZ).date()
+    cutoff = datetime.datetime.now() - datetime.timedelta(hours=2)
+    urls = [_okooo_url_for_date()]
+    for offset in range(-OKOOO_HISTORY_DAYS, OKOOO_FUTURE_DAYS + 1):
+        urls.append(_okooo_url_for_date(today + datetime.timedelta(days=offset)))
+
+    matches = {}
+    errors = []
+    for url in dict.fromkeys(urls):
+        try:
+            page_matches = _parse_okooo_jingcai_html(_okooo_request(url), include_ended=include_ended) or []
+        except ExternalApiError as e:
+            errors.append(str(e))
+            continue
+        for item in page_matches:
+            raw = item["raw"]
+            try:
+                kickoff = datetime.datetime.strptime(
+                    f"{raw.get('matchDate', '')} {raw.get('matchTime', '')}",
+                    "%Y-%m-%d %H:%M",
+                )
+            except (TypeError, ValueError):
+                continue
+            if kickoff < cutoff:
+                continue
+            key = (
+                raw.get("matchDate"),
+                str(raw.get("matchNumStr") or raw.get("matchNum") or "")[-3:],
+                (raw.get("matchTime") or "")[:5],
+                raw.get("homeTeamAllName"),
+                raw.get("awayTeamAllName"),
+            )
+            matches[key] = item
+
+    if matches:
+        return sorted(
+            matches.values(),
+            key=lambda item: (
+                item["raw"].get("matchDate") or "",
+                item["raw"].get("matchTime") or "",
+                item["raw"].get("matchNumStr") or "",
+            ),
+        )
+    if errors:
+        raise ExternalApiError("；".join(errors[:2]))
+    return None
+
+
 def fetch_from_okooo():
     jingcai_matches = fetch_from_okooo_jingcai()
     if not jingcai_matches:
         return None
-    return [_sporttery_row(jc["raw"], jc["had"], clear_stale_odds=True) for jc in jingcai_matches]
+    return [
+        _sporttery_row(jc["raw"], jc["had"], clear_stale_odds=True, preserve_missing=True)
+        for jc in jingcai_matches
+    ]
 
 
 def _jingcai_match_from_20002028(row):
@@ -1207,7 +1277,7 @@ def fetch_from_20002028_jingcai():
     return matches or None
 
 
-def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False):
+def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False, preserve_missing=False):
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row = {
         "match_no": str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
@@ -1226,6 +1296,7 @@ def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False):
         "jingcai_away": had["away"],
         "clear_stale_odds": clear_stale_odds,
         "full_snapshot": True,
+        "preserve_missing": preserve_missing,
     }
     if primary:
         row.update({
@@ -1268,11 +1339,11 @@ def fetch_from_odds_api_io():
                 return None
 
         jingcai_only_matches = [
-            _sporttery_row(jc["raw"], jc["had"])
+            _sporttery_row(jc["raw"], jc["had"], preserve_missing=True)
             for jc in jingcai_matches
         ]
         clearable_jingcai_matches = [
-            _sporttery_row(jc["raw"], jc["had"], clear_stale_odds=True)
+            _sporttery_row(jc["raw"], jc["had"], clear_stale_odds=True, preserve_missing=True)
             for jc in jingcai_matches
         ]
 
@@ -1395,7 +1466,7 @@ def fetch_from_odds_api_io():
                 str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
                 (jc_match.get("matchTime") or "")[:5],
             )
-            matched_rows[key] = _sporttery_row(jc_match, had, primary)
+            matched_rows[key] = _sporttery_row(jc_match, had, primary, preserve_missing=True)
 
         matches = []
         for jc in jingcai_matches:
@@ -1405,7 +1476,10 @@ def fetch_from_odds_api_io():
                 str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
                 (jc_match.get("matchTime") or "")[:5],
             )
-            matches.append(matched_rows.get(key) or _sporttery_row(jc_match, jc["had"], clear_stale_odds=True))
+            matches.append(
+                matched_rows.get(key)
+                or _sporttery_row(jc_match, jc["had"], clear_stale_odds=True, preserve_missing=True)
+            )
 
         matched_count = len(matched_rows)
         if matches:

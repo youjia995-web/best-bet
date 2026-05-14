@@ -27,6 +27,7 @@ uvicorn app:app --host 0.0.0.0 --port $PORT
 - `DATA_DIR=/data`
 - `DEFAULT_DATA_SOURCE=odds_api_io`：推荐，云端默认使用“澳客竞彩 + Odds-API.io 欧赔”。
 - `OKOOO_JINGCAI_URL=https://www.okooo.com/jingcai/`：可选，澳客竞彩页面地址。
+- `OKOOO_HISTORY_DAYS=1`、`OKOOO_FUTURE_DAYS=2`：可选，澳客会抓取昨天到后天的页面，避免澳客翻页后上一期比赛从监控页消失。
 
 备用源额度保护相关变量可按需添加：
 
