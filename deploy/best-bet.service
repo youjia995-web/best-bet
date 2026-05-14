@@ -1,0 +1,17 @@
+[Unit]
+Description=Best Bet FastAPI Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/best-bet
+Environment=DATA_DIR=/opt/best-bet-data
+Environment=ADMIN_PASSWORD=change-this-password
+Environment=ODDS_API_IO_KEY=
+ExecStart=/opt/best-bet/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

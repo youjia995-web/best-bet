@@ -1,6 +1,114 @@
 # 云端部署说明
 
-这个项目会在后台定时采集数据，并用 SQLite 保存赔率、回测和状态文件。想免费部署，优先推荐 Railway；它的 Free/Trial 计划支持 0.5GB Volume，可以保存 SQLite 数据。
+这个项目会在后台定时采集数据，并用 SQLite 保存赔率、回测和状态文件。你已经购买阿里云轻量服务器的话，优先用服务器部署，这是最适合长期运行的方式。
+
+## 阿里云轻量服务器部署
+
+以下命令按 Ubuntu/Debian 系统编写。CentOS/Alibaba Cloud Linux 也可以部署，但安装命令会略有不同。
+
+### 1. 连接服务器
+
+```bash
+ssh root@你的服务器公网IP
+```
+
+### 2. 安装基础环境
+
+```bash
+apt update
+apt install -y git python3 python3-venv python3-pip
+```
+
+### 3. 拉取项目
+
+```bash
+cd /opt
+git clone https://github.com/youjia995-web/best-bet.git
+cd /opt/best-bet
+```
+
+如果服务器上已经 clone 过，以后更新代码用：
+
+```bash
+cd /opt/best-bet
+git pull
+```
+
+### 4. 安装 Python 依赖
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -r requirements.txt
+```
+
+### 5. 配置数据目录
+
+```bash
+mkdir -p /opt/best-bet-data
+```
+
+项目会把 SQLite 数据库和状态文件保存到这里：
+
+- `/opt/best-bet-data/odds_monitor.db`
+- `/opt/best-bet-data/data_source_state.json`
+- `/opt/best-bet-data/odds_api_io_state.json`
+
+### 6. 配置 systemd 开机自启动
+
+复制服务模板：
+
+```bash
+cp /opt/best-bet/deploy/best-bet.service /etc/systemd/system/best-bet.service
+```
+
+编辑服务文件，把 `ADMIN_PASSWORD` 改成你的管理密码；如果有备用接口 key，也填写 `ODDS_API_IO_KEY`：
+
+```bash
+nano /etc/systemd/system/best-bet.service
+```
+
+启动服务：
+
+```bash
+systemctl daemon-reload
+systemctl enable best-bet
+systemctl start best-bet
+systemctl status best-bet --no-pager
+```
+
+查看日志：
+
+```bash
+journalctl -u best-bet -f
+```
+
+### 7. 开放阿里云防火墙端口
+
+在阿里云轻量服务器控制台打开防火墙，添加入方向规则：
+
+- 端口：`8000`
+- 协议：`TCP`
+- 来源：`0.0.0.0/0`
+
+然后访问：
+
+```text
+http://你的服务器公网IP:8000
+```
+
+### 8. 更新代码后重启
+
+```bash
+cd /opt/best-bet
+git pull
+.venv/bin/pip install -r requirements.txt
+systemctl restart best-bet
+```
+
+## 可选：绑定域名
+
+如果你要用自己的域名访问大陆服务器，通常需要先做 ICP 备案。只用公网 IP 访问则不需要备案。
 
 ## 免费推荐：Railway
 
