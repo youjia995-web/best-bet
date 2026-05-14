@@ -26,6 +26,7 @@ uvicorn app:app --host 0.0.0.0 --port $PORT
 - `ODDS_API_IO_KEY`：备用数据源 key；如果只用主接口可先留空。
 - `DATA_DIR=/data`
 - `DEFAULT_DATA_SOURCE=odds_api_io`：可选，如果希望云端启动后默认使用备用数据源。
+- `OKOOO_JINGCAI_URL=https://www.okooo.com/jingcai/`：可选，澳客竞彩页面地址。
 
 备用源额度保护相关变量可按需添加：
 
@@ -33,7 +34,7 @@ uvicorn app:app --host 0.0.0.0 --port $PORT
 - `ODDS_API_IO_EVENT_LIMIT=300`
 - `ODDS_API_IO_BOOKMAKERS=Bet365,Unibet`
 
-如果 Zeabur 日志出现 `体彩竞彩接口 HTTP 567 Unknown Status`，通常是云端 IP 访问体彩官网接口被网关拦截。当前版本会自动改用主接口的竞彩赛程，再继续匹配 Odds-API.io 欧赔；如果主接口也不可用，可以临时把 `DEFAULT_DATA_SOURCE` 改为 `20002028` 只跑主接口。
+如果 Zeabur 日志出现 `体彩竞彩接口 HTTP 567 Unknown Status`，通常是云端 IP 访问体彩官网接口被网关拦截。当前版本会自动改用澳客竞彩赛程，再继续匹配 Odds-API.io 欧赔；如果澳客和主接口也不可用，可以临时把 `DEFAULT_DATA_SOURCE` 改为 `20002028` 只跑主接口。
 
 ### 3. 挂载持久化 Volume
 

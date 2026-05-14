@@ -13,7 +13,8 @@ from models import Match, OddsChange, SessionLocal
 from config import (
     API_TIMEOUT, MAX_RETRIES, RETRY_BACKOFF,
     DATA_SOURCE_STATE_FILE, DEFAULT_DATA_SOURCE,
-    SPORTTERY_API_BASE, ODDS_API_IO_BASE, ODDS_API_IO_KEY, ODDS_API_IO_KEY_FILE,
+    SPORTTERY_API_BASE, OKOOO_JINGCAI_URL,
+    ODDS_API_IO_BASE, ODDS_API_IO_KEY, ODDS_API_IO_KEY_FILE,
     ODDS_API_IO_BOOKMAKERS, ODDS_API_IO_EVENT_LIMIT, ODDS_API_IO_CACHE_TTL,
     ODDS_API_IO_BATCH_SIZE, ODDS_API_IO_FREE_REQUESTS_PER_HOUR,
     ODDS_API_IO_MAX_REQUESTS_PER_CYCLE, ODDS_API_IO_MIN_INTERVAL,
@@ -35,6 +36,11 @@ SOURCE_OPTIONS = {
         "name": "备用接口",
         "description": "竞彩赛程 + Odds-API.io 欧赔",
         "requires_key": True,
+    },
+    "okooo": {
+        "name": "澳客竞彩",
+        "description": "澳客竞彩赛程与胜平负赔率",
+        "requires_key": False,
     },
     "mock": {
         "name": "模拟数据",
@@ -1031,6 +1037,124 @@ def fetch_from_sporttery_jingcai():
     return matches
 
 
+def _okooo_request():
+    import ssl
+
+    req = urllib.request.Request(
+        OKOOO_JINGCAI_URL,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Referer": "https://www.okooo.com/",
+        },
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as resp:
+            return resp.read().decode("gb18030", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise ExternalApiError(_http_error_message("澳客竞彩", OKOOO_JINGCAI_URL, e)) from e
+    except Exception as e:
+        raise ExternalApiError(f"澳客竞彩请求失败: {_redact_url(OKOOO_JINGCAI_URL)} | {e}") from e
+
+
+def _okooo_odd(match, wf, wz):
+    box = match.select_one(f'[data-wf="{wf}"][data-wz="{wz}"]')
+    if not box:
+        return None
+    odd = _to_decimal(box.get("data-sp"))
+    if odd:
+        return odd
+    peilv = box.select_one(".peilv")
+    if peilv:
+        return _to_decimal(peilv.get_text(strip=True))
+    return None
+
+
+def _okooo_team(match, wf, wz, data_key):
+    box = match.select_one(f'[data-wf="{wf}"][data-wz="{wz}"]')
+    name = ""
+    if box:
+        team = box.select_one(".zhum")
+        if team:
+            name = team.get("title") or team.get_text(strip=True)
+    return name or match.get(data_key) or ""
+
+
+def _okooo_match_datetime(match):
+    time_el = match.select_one(".shijian")
+    title = time_el.get("title") if time_el else ""
+    found = re.search(r"(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})", title or "")
+    if found:
+        return found.group(1), found.group(2)
+    return "", (time_el.get("mtime") if time_el else "") or ""
+
+
+def fetch_from_okooo_jingcai(include_ended=False):
+    """从澳客竞彩页面提取赛程与胜平负 SP。"""
+    from bs4 import BeautifulSoup
+
+    html = _okooo_request()
+    soup = BeautifulSoup(html, "html.parser")
+    matches = []
+    for item in soup.select("div.touzhu_1[data-mid]"):
+        if not include_ended and item.get("data-end") == "1":
+            continue
+
+        had = {
+            "home": _okooo_odd(item, "0", "0"),
+            "draw": _okooo_odd(item, "0", "1"),
+            "away": _okooo_odd(item, "0", "2"),
+        }
+        if not all(had.values()):
+            continue
+
+        match_date, start_time = _okooo_match_datetime(item)
+        order_cn = item.get("data-ordercn") or ""
+        match_no = re.sub(r"\D+", "", order_cn)[-3:] or (item.get("data-morder") or "")[-3:]
+        league_el = item.select_one(".saiming")
+        league = (league_el.get("title") if league_el else "") or (league_el.get_text(strip=True) if league_el else "")
+        home = _okooo_team(item, "0", "0", "data-hname")
+        away = _okooo_team(item, "0", "2", "data-aname")
+        if not (match_no and league and home and away and match_date and start_time):
+            continue
+
+        raw = {
+            "matchNumStr": match_no,
+            "matchNum": match_no,
+            "leagueAbbName": league,
+            "leagueAllName": league,
+            "homeTeamAbbName": home,
+            "homeTeamAllName": home,
+            "awayTeamAbbName": away,
+            "awayTeamAllName": away,
+            "matchDate": match_date,
+            "matchTime": start_time,
+            "oddsList": [{
+                "poolCode": "HAD",
+                "h": had["home"],
+                "d": had["draw"],
+                "a": had["away"],
+            }],
+            "okoooMid": item.get("data-mid"),
+            "orderCn": order_cn,
+            "rq": item.get("data-rq"),
+        }
+        matches.append({"raw": raw, "had": had})
+
+    return matches or None
+
+
+def fetch_from_okooo():
+    jingcai_matches = fetch_from_okooo_jingcai()
+    if not jingcai_matches:
+        return None
+    return [_sporttery_row(jc["raw"], jc["had"], clear_stale_odds=True) for jc in jingcai_matches]
+
+
 def _jingcai_match_from_20002028(row):
     had = {
         "home": _to_decimal(_pick_source_field(row, "jingcai_home", "jc_home", "home_jingcai", "spf_home")),
@@ -1132,15 +1256,23 @@ def fetch_from_odds_api_io():
             jingcai_matches = fetch_from_sporttery_jingcai()
         except ExternalApiError as e:
             sporttery_error = str(e)
-            print(f"  体彩竞彩接口不可用，改用主接口赛程匹配欧赔: {e}")
+            print(f"  体彩竞彩接口不可用，改用澳客竞彩赛程匹配欧赔: {e}")
             jingcai_matches = None
+
+        if not jingcai_matches:
+            jingcai_source_label = "澳客"
+            try:
+                jingcai_matches = fetch_from_okooo_jingcai()
+            except ExternalApiError as e:
+                print(f"  澳客竞彩接口不可用，继续尝试主接口赛程: {e}")
+                jingcai_matches = None
 
         if not jingcai_matches:
             jingcai_source_label = "主接口"
             jingcai_matches = fetch_from_20002028_jingcai()
             if not jingcai_matches:
                 detail = f"；体彩接口失败: {sporttery_error}" if sporttery_error else ""
-                message = f"主接口也未返回可用胜平负比赛{detail}"
+                message = f"澳客和主接口也未返回可用胜平负比赛{detail}"
                 _set_odds_api_io_status("error", message)
                 print(f"  {message}")
                 return None
@@ -1374,6 +1506,12 @@ def collect_data():
         ok = collect_real_data()
         if not ok:
             print("⚠️ 真实数据源不可用，跳过本轮采集（不 fallback 模拟数据）")
+            return False
+        return ok
+    elif source == "okooo":
+        ok = collect_real_data(fetch_from_okooo)
+        if not ok:
+            print("⚠️ 澳客竞彩数据源不可用，跳过本轮采集（不 fallback 模拟数据）")
             return False
         return ok
     elif source == "odds_api_io":

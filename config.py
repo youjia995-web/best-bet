@@ -28,9 +28,10 @@ API_TIMEOUT = 6        # 单次请求超时秒数
 MAX_RETRIES = 3        # 最大重试次数
 RETRY_BACKOFF = [1, 2, 4]  # 重试间隔秒数（指数退避）
 
-# 备用接口：体彩竞彩 + Odds-API.io Bet365
+# 备用接口：竞彩赛程 + Odds-API.io Bet365
 # 免费注册后把 key 放到环境变量 ODDS_API_IO_KEY，或放到本项目根目录 odds_api_io.key。
 SPORTTERY_API_BASE = os.environ.get("SPORTTERY_API_BASE", "https://webapi.sporttery.cn").rstrip("/")
+OKOOO_JINGCAI_URL = os.environ.get("OKOOO_JINGCAI_URL", "https://www.okooo.com/jingcai/").strip()
 ODDS_API_IO_BASE = os.environ.get("ODDS_API_IO_BASE", "https://api.odds-api.io/v3").rstrip("/")
 ODDS_API_IO_KEY_FILE = os.path.join(DATA_DIR, "odds_api_io.key")
 ODDS_API_IO_KEY = (
