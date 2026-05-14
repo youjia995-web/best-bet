@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from sqlalchemy.orm import Session
@@ -47,6 +48,38 @@ _odds_api_io_cache = {"expires_at": 0, "matches": None}
 
 class OddsApiBudgetError(Exception):
     """Raised when Odds-API.io should not be called under the free plan budget."""
+
+
+class ExternalApiError(Exception):
+    """External API request failed with context safe for logs."""
+
+
+def _redact_url(url):
+    parsed = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    redacted = [
+        (key, "***" if key.lower() in {"apikey", "api_key", "key", "token"} else value)
+        for key, value in query
+    ]
+    return urllib.parse.urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        urllib.parse.urlencode(redacted),
+        parsed.fragment,
+    ))
+
+
+def _http_error_message(service, url, error):
+    try:
+        body = error.read(500).decode("utf-8", errors="replace").strip()
+    except Exception:
+        body = ""
+    message = f"{service} HTTP {error.code} {error.reason or ''}".strip()
+    message = f"{message}: {_redact_url(url)}"
+    if body:
+        message = f"{message} | {body}"
+    return message
 
 
 def _load_data_source():
@@ -470,16 +503,20 @@ def _odds_api_request(path, params):
 
     _mark_odds_api_io_requests(1, "requesting", f"请求 {path}")
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v not in ("", None)})
+    url = f"{ODDS_API_IO_BASE}/{path}?{query}"
     req = urllib.request.Request(
-        f"{ODDS_API_IO_BASE}/{path}?{query}",
+        url,
         headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
     )
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as resp:
-        _remember_odds_api_headers(resp.headers)
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as resp:
+            _remember_odds_api_headers(resp.headers)
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise ExternalApiError(_http_error_message("Odds-API.io", url, e)) from e
 
 
 def _odds_api_multi_request(event_ids, api_key, bookmakers=None):
@@ -565,8 +602,9 @@ def _sporttery_request(path, params=None):
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
             "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Origin": "https://www.lottery.gov.cn",
             "Referer": "https://www.lottery.gov.cn/jc/index.html",
         },
@@ -574,8 +612,11 @@ def _sporttery_request(path, params=None):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise ExternalApiError(_http_error_message("体彩竞彩接口", url, e)) from e
 
 
 def _get_odds_api_io_key():
@@ -1257,7 +1298,12 @@ def collect_data():
     elif source == "odds_api_io":
         ok = collect_real_data(fetch_from_odds_api_io)
         if not ok:
-            print("⚠️ 备用数据源不可用，跳过本轮采集（不 fallback 模拟数据）")
+            print("⚠️ 备用数据源不可用，尝试主接口 fallback（不 fallback 模拟数据）")
+            fallback_ok = collect_real_data()
+            if fallback_ok:
+                print("  已使用主接口完成本轮 fallback 采集")
+                return True
+            print("⚠️ 主接口 fallback 也不可用，跳过本轮采集")
             return False
         return ok
     elif source == "mock":

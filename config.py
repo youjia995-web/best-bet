@@ -30,8 +30,8 @@ RETRY_BACKOFF = [1, 2, 4]  # 重试间隔秒数（指数退避）
 
 # 备用接口：体彩竞彩 + Odds-API.io Bet365
 # 免费注册后把 key 放到环境变量 ODDS_API_IO_KEY，或放到本项目根目录 odds_api_io.key。
-SPORTTERY_API_BASE = "https://webapi.sporttery.cn"
-ODDS_API_IO_BASE = "https://api.odds-api.io/v3"
+SPORTTERY_API_BASE = os.environ.get("SPORTTERY_API_BASE", "https://webapi.sporttery.cn").rstrip("/")
+ODDS_API_IO_BASE = os.environ.get("ODDS_API_IO_BASE", "https://api.odds-api.io/v3").rstrip("/")
 ODDS_API_IO_KEY_FILE = os.path.join(DATA_DIR, "odds_api_io.key")
 ODDS_API_IO_KEY = (
     os.environ.get("ODDS_API_IO_KEY", "").strip()
