@@ -1,0 +1,17 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Local runtime files
+*.log
+*.pid
+*.db
+*_state.json
+data_source_state.json
+original_site_source.html
+
+# Local credentials and machine-specific settings
+*.key
+.env
+.env.*
+.claude/

@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>竞彩赔率监控 — 新版预览</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg-primary: #0a0e1a;
+    --bg-secondary: #111827;
+    --bg-card: rgba(255,255,255,0.03);
+    --border: rgba(255,255,255,0.06);
+    --text-primary: #e5e7eb;
+    --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+    --accent-green: #00e676;
+    --accent-gold: #f59e0b;
+    --accent-red: #ff6b6b;
+    --accent-blue: #60a5fa;
+    --accent-cyan: #22d3ee;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 4px 24px rgba(0,0,0,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(135deg, #0a0e1a 0%, #111827 50%, #0f172a 100%);
+    color: var(--text-primary);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  /* ===== 顶部导航栏 ===== */
+  .topbar {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; height: 56px;
+    background: rgba(17,24,39,0.85); backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-logo {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 16px; font-weight: 700;
+  }
+  .topbar-logo .icon { font-size: 24px; }
+  .topbar-logo .green { color: var(--accent-green); }
+  .topbar-clock {
+    font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums;
+    letter-spacing: 1px;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .topbar-right { display: flex; align-items: center; gap: 16px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; position: relative; }
+  .status-dot.online { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+  .status-dot.online::after {
+    content: ''; position: absolute; inset: -2px; border-radius: 50%;
+    border: 1px solid var(--accent-green); animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.3; transform: scale(2); }
+  }
+  .topbar-btn {
+    padding: 6px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text-primary); cursor: pointer;
+    font-size: 13px; font-family: inherit; transition: all 0.2s;
+  }
+  .topbar-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+  .topbar-btn.primary { background: var(--accent-green); color: #000; border: none; font-weight: 600; }
+  .topbar-btn.primary:hover { opacity: 0.9; }
+
+  /* ===== 主容器 ===== */
+  .main { max-width: 1320px; margin: 0 auto; padding: 24px; }
+
+  /* ===== 统计卡片行 ===== */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+    backdrop-filter: blur(10px); transition: all 0.3s;
+  }
+  .stat-card:hover { border-color: rgba(255,255,255,0.15); transform: translateY(-2px); }
+  .stat-card .icon-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .stat-card .icon-box {
+    width: 40px; height: 40px; border-radius: var(--radius-sm);
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+  }
+  .icon-box.green { background: rgba(0,230,118,0.1); color: var(--accent-green); }
+  .icon-box.gold { background: rgba(245,158,11,0.1); color: var(--accent-gold); }
+  .icon-box.blue { background: rgba(96,165,250,0.1); color: var(--accent-blue); }
+  .icon-box.cyan { background: rgba(34,211,238,0.1); color: var(--accent-cyan); }
+  .stat-card .label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; color: var(--text-primary); margin: 4px 0; }
+  .stat-card .sub { font-size: 11px; color: var(--text-muted); }
+
+  /* ===== Tab 导航 ===== */
+  .tab-nav {
+    display: flex; gap: 4px; margin-bottom: 20px;
+    background: var(--bg-card); border-radius: var(--radius);
+    padding: 4px; border: 1px solid var(--border);
+  }
+  .tab-btn {
+    flex: 1; padding: 10px 20px; border: none; border-radius: 8px;
+    background: transparent; color: var(--text-secondary); cursor: pointer;
+    font-size: 14px; font-weight: 500; font-family: inherit;
+    transition: all 0.25s;
+  }
+  .tab-btn.active { background: rgba(0,230,118,0.1); color: var(--accent-green); }
+  .tab-btn:hover:not(.active) { color: var(--text-primary); }
+  .tab-panel { display: none; animation: fadeIn 0.3s; }
+  .tab-panel.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ===== 子 Tab ===== */
+  .subtab-nav {
+    display: flex; gap: 2px; margin-bottom: 16px;
+    background: rgba(255,255,255,0.02); border-radius: var(--radius-sm);
+    padding: 3px; width: fit-content;
+  }
+  .subtab-btn {
+    padding: 6px 18px; border: none; border-radius: 6px;
+    background: transparent; color: var(--text-muted); cursor: pointer;
+    font-size: 13px; font-family: inherit; transition: all 0.2s;
+  }
+  .subtab-btn.active { background: rgba(245,158,11,0.15); color: var(--accent-gold); }
+  .subtab-btn:hover:not(.active) { color: var(--text-secondary); }
+
+  /* ===== 比赛卡片网格 ===== */
+  .match-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px;
+  }
+  .match-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+    transition: all 0.3s;
+  }
+  .match-card:hover { border-color: rgba(255,255,255,0.12); }
+  .match-card .card-header {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+  }
+  .match-card .league-tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    background: rgba(34,211,238,0.1); color: var(--accent-cyan);
+  }
+  .match-card .match-no { font-size: 11px; color: var(--text-muted); }
+  .match-card .teams {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+  }
+  .match-card .team { text-align: center; flex: 1; }
+  .match-card .team-name { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .match-card .team-name.small { font-size: 13px; }
+  .match-card .vs { font-size: 12px; color: var(--text-muted); padding: 0 12px; }
+  .match-card .odds-row { display: flex; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+  .match-card .odds-item {
+    flex: 1; text-align: center; padding: 6px 4px; border-radius: 6px;
+    background: rgba(255,255,255,0.03);
+  }
+  .match-card .odds-label { color: var(--text-muted); font-size: 10px; margin-bottom: 2px; }
+  .match-card .odds-val { font-weight: 600; font-size: 13px; }
+  .match-card .odds-val.highlight { color: var(--accent-green); }
+  .match-card .card-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; color: var(--text-muted); margin-top: 10px;
+    padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  .countdown-bar {
+    height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px;
+    margin-top: 10px; overflow: hidden;
+  }
+  .countdown-bar .fill {
+    height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
+    transition: width 1s linear;
+  }
+
+  /* ===== 价值投注表格 ===== */
+  .value-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  .value-table th {
+    padding: 10px 12px; text-align: left; font-weight: 500;
+    color: var(--text-muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.5px; border-bottom: 1px solid var(--border);
+  }
+  .value-table td { padding: 12px; border-bottom: 1px solid var(--border); }
+  .value-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;
+  }
+  .badge-win { background: rgba(0,230,118,0.15); color: var(--accent-green); }
+  .badge-draw { background: rgba(245,158,11,0.15); color: var(--accent-gold); }
+  .badge-loss { background: rgba(255,107,107,0.15); color: var(--accent-red); }
+  .change-up { color: var(--accent-green); }
+  .change-down { color: var(--accent-red); }
+  .odds-highlight { color: var(--accent-gold); font-weight: 600; }
+
+  /* ===== 回测表格 ===== */
+  .backtest-section { margin-bottom: 24px; }
+  .backtest-section .section-header {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
+  }
+  .backtest-section .section-title { font-size: 14px; font-weight: 600; }
+  .profit-badge {
+    font-size: 16px; font-weight: 700; padding: 4px 12px; border-radius: var(--radius-sm);
+  }
+  .profit-badge.positive { background: rgba(0,230,118,0.1); color: var(--accent-green); }
+  .profit-badge.negative { background: rgba(255,107,107,0.1); color: var(--accent-red); }
+  .bt-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+  .bt-table th {
+    padding: 8px 10px; text-align: center; font-weight: 500;
+    color: var(--text-muted); font-size: 11px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+  .bt-table td { padding: 10px; text-align: center; border-bottom: 1px solid var(--border); }
+  .bt-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .tag-hit { background: rgba(0,230,118,0.15); color: var(--accent-green); }
+  .tag-miss { background: rgba(255,107,107,0.15); color: var(--accent-red); }
+  .tag-pending { background: rgba(255,255,255,0.05); color: var(--text-muted); }
+  .action-btn {
+    padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-secondary); cursor: pointer;
+    font-size: 11px; font-family: inherit; transition: all 0.15s;
+  }
+  .action-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+  .action-btn.danger:hover { border-color: var(--accent-red); color: var(--accent-red); }
+
+  /* ===== 赔率变化面板 ===== */
+  .changes-panel {
+    margin-top: 24px; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .changes-panel .panel-header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    font-size: 13px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .change-item {
+    display: flex; align-items: center; padding: 12px 20px;
+    border-bottom: 1px solid var(--border); gap: 16px;
+  }
+  .change-item:last-child { border-bottom: none; }
+  .change-item .ci-time { font-size: 12px; color: var(--text-muted); min-width: 60px; }
+  .change-item .ci-match { flex: 1; font-size: 13px; }
+  .change-item .ci-league { color: var(--accent-cyan); font-size: 11px; margin-right: 8px; }
+  .change-arrow { font-size: 16px; margin: 0 8px; }
+  .change-arrow.up { color: var(--accent-green); }
+  .change-arrow.down { color: var(--accent-red); }
+  .change-item .ci-type { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+  .ci-type.zhushang { background: rgba(0,230,118,0.1); color: var(--accent-green); }
+  .ci-type.keshang { background: rgba(255,107,107,0.1); color: var(--accent-red); }
+
+  /* ===== 响应式 ===== */
+  @media (max-width: 768px) {
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .match-grid { grid-template-columns: 1fr; }
+    .topbar { padding: 0 12px; }
+    .topbar-clock { font-size: 16px; }
+    .tab-btn { font-size: 12px; padding: 8px 12px; }
+    .stat-card .value { font-size: 22px; }
+  }
+
+  /* ===== 滚动条 ===== */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ===== 顶部栏 ===== -->
+<header class="topbar">
+  <div class="topbar-logo">
+    <span class="icon">⚽</span>
+    <span>竞彩监控</span>
+    <span class="green">· Live</span>
+  </div>
+  <div class="topbar-clock" id="clock">--:--:--</div>
+  <div class="topbar-right">
+    <div class="status-dot online" title="采集运行中"></div>
+    <span style="font-size:12px;color:var(--accent-green);">运行中</span>
+    <span style="font-size:12px;color:var(--text-muted);">下次刷新: 8秒</span>
+    <button class="topbar-btn" onclick="alert('Demo 模式')">导出</button>
+    <button class="topbar-btn primary" onclick="alert('Demo 模式')">手动采集</button>
+  </div>
+</header>
+
+<div class="main">
+
+<!-- ===== 统计卡片 ===== -->
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="icon-row">
+      <div class="icon-box cyan">⚽</div>
+      <div class="label">监控比赛</div>
+    </div>
+    <div class="value">28</div>
+    <div class="sub">今日未开赛</div>
+  </div>
+  <div class="stat-card">
+    <div class="icon-row">
+      <div class="icon-box gold">📊</div>
+      <div class="label">赔率变化</div>
+    </div>
+    <div class="value">156</div>
+    <div class="sub">累计检测</div>
+  </div>
+  <div class="stat-card">
+    <div class="icon-row">
+      <div class="icon-box green">●</div>
+      <div class="label">采集状态</div>
+    </div>
+    <div class="value" style="color:var(--accent-green)">正常</div>
+    <div class="sub">每 10 秒自动刷新</div>
+  </div>
+  <div class="stat-card">
+    <div class="icon-row">
+      <div class="icon-box blue">⏱</div>
+      <div class="label">最后更新</div>
+    </div>
+    <div class="value" style="font-size:22px">21:53:48</div>
+    <div class="sub">2026-05-10</div>
+  </div>
+</div>
+
+<!-- ===== 主 Tab 导航 ===== -->
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('matches')">📋 比赛列表</button>
+  <button class="tab-btn" onclick="switchTab('value')">💎 价值投注</button>
+  <button class="tab-btn" onclick="switchTab('backtest')">🎯 回测中心</button>
+</div>
+
+<!-- ===== Tab 1: 比赛列表 ===== -->
+<div class="tab-panel active" id="panel-matches">
+  <div class="match-grid" id="matchGrid"></div>
+</div>
+
+<!-- ===== Tab 2: 价值投注 ===== -->
+<div class="tab-panel" id="panel-value">
+  <div style="overflow-x:auto;">
+    <table class="value-table">
+      <thead>
+        <tr><th>时间</th><th>日期</th><th>场次</th><th>联赛</th><th>主队 vs 客队</th><th>皇G赔率</th><th>竞彩赔率</th><th>当前赔率</th><th>升跌</th><th>选项</th></tr>
+      </thead>
+      <tbody id="valueTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== Tab 3: 回测中心 ===== -->
+<div class="tab-panel" id="panel-backtest">
+  <div class="subtab-nav">
+    <button class="subtab-btn active" onclick="switchSubTab('2x1')">2串1</button>
+    <button class="subtab-btn" onclick="switchSubTab('single')">单关</button>
+    <button class="subtab-btn" onclick="switchSubTab('fall')">跌水</button>
+    <button class="subtab-btn" onclick="switchSubTab('draw')">平局</button>
+  </div>
+
+  <!-- 2串1 -->
+  <div class="backtest-section subtab-panel active" id="subtab-2x1">
+    <div class="section-header">
+      <span class="section-title">2串1 回测 <span style="color:var(--text-muted);font-size:12px;">(皇G欧 &lt; 4.0)</span></span>
+      <span class="profit-badge positive" id="profit-2x1">+1,280元</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="bt-table">
+        <thead>
+          <tr><th>投注时间</th><th>比赛1</th><th>选项1</th><th>赔率1</th><th>比赛2</th><th>选项2</th><th>赔率2</th><th>总赔率</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr>
+        </thead>
+        <tbody id="table-2x1"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 单关 -->
+  <div class="backtest-section subtab-panel" id="subtab-single" style="display:none;">
+    <div class="section-header">
+      <span class="section-title">单关回测 <span style="color:var(--text-muted);font-size:12px;">(皇G欧 &lt; 4.0)</span></span>
+      <span class="profit-badge positive" id="profit-single">+860元</span>
+    </div>
+    <table class="bt-table">
+      <thead>
+        <tr><th>投注时间</th><th>比赛</th><th>选项</th><th>竞彩</th><th>皇冠</th><th>升跌</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr>
+      </thead>
+      <tbody id="table-single"></tbody>
+    </table>
+  </div>
+
+  <!-- 跌水 -->
+  <div class="backtest-section subtab-panel" id="subtab-fall" style="display:none;">
+    <div class="section-header">
+      <span class="section-title">跌水回测 <span style="color:var(--text-muted);font-size:12px;">(皇G欧 &lt; 3.5 且 升跌 &lt; -2)</span></span>
+      <span class="profit-badge positive" id="profit-fall">+320元</span>
+    </div>
+    <table class="bt-table">
+      <thead>
+        <tr><th>投注时间</th><th>比赛</th><th>选项</th><th>竞彩</th><th>皇冠</th><th>升跌</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr>
+      </thead>
+      <tbody id="table-fall"></tbody>
+    </table>
+  </div>
+
+  <!-- 平局 -->
+  <div class="backtest-section subtab-panel" id="subtab-draw" style="display:none;">
+    <div class="section-header">
+      <span class="section-title">平局回测</span>
+      <span class="profit-badge negative" id="profit-draw">-200元</span>
+    </div>
+    <table class="bt-table">
+      <thead>
+        <tr><th>投注时间</th><th>比赛</th><th>选项</th><th>竞彩</th><th>皇冠</th><th>升跌</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr>
+      </thead>
+      <tbody id="table-draw"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== 赔率变化面板 ===== -->
+<div class="changes-panel">
+  <div class="panel-header">
+    <span>📈 赔率变化记录</span>
+    <span style="font-size:11px;color:var(--text-muted);">最近 5 条</span>
+  </div>
+  <div id="changesList"></div>
+</div>
+
+</div><!-- .main -->
+
+<script>
+// ===== 时钟 =====
+function tick() {
+  const now = new Date();
+  const s = n => String(n).padStart(2,'0');
+  document.getElementById('clock').textContent =
+    now.getFullYear() + '-' + s(now.getMonth()+1) + '-' + s(now.getDate()) + ' ' +
+    s(now.getHours()) + ':' + s(now.getMinutes()) + ':' + s(now.getSeconds());
+}
+tick(); setInterval(tick, 1000);
+
+// ===== Mock 数据 =====
+const mockMatches = [
+  { no:'001', league:'日职联', home:'大阪樱花', away:'长崎航海', start:'15:00', h:1.82, d:3.45, a:4.20, jh:1.90, jd:3.48, ja:4.15, hg:'主胜' },
+  { no:'002', league:'韩K联', home:'光州FC', away:'江原FC', start:'15:30', h:2.10, d:3.20, a:3.40, jh:2.15, jd:3.22, ja:3.38, hg:'--' },
+  { no:'003', league:'英超', home:'利物浦', away:'切尔西', start:'19:30', h:1.65, d:3.80, a:5.00, jh:1.68, jd:3.85, ja:4.95, hg:'主胜' },
+  { no:'004', league:'英超', home:'阿森纳', away:'曼联', start:'22:00', h:2.05, d:3.40, a:3.60, jh:2.12, jd:3.45, ja:3.55, hg:'平局' },
+  { no:'005', league:'西甲', home:'巴塞罗那', away:'皇家马德里', start:'22:30', h:2.30, d:3.30, a:3.10, jh:2.35, jd:3.35, ja:3.05, hg:'客胜' },
+  { no:'006', league:'意甲', home:'AC米兰', away:'国际米兰', start:'23:00', h:3.20, d:3.10, a:2.20, jh:3.25, jd:3.15, ja:2.18, hg:'--' },
+  { no:'007', league:'德甲', home:'拜仁慕尼黑', away:'多特蒙德', start:'00:30', h:1.55, d:4.20, a:5.50, jh:1.58, jd:4.25, ja:5.45, hg:'主胜' },
+  { no:'008', league:'荷甲', home:'阿贾克斯', away:'费耶诺德', start:'01:00', h:1.95, d:3.60, a:3.50, jh:2.00, jd:3.62, ja:3.48, hg:'平局' },
+];
+
+const mockValueBets = [
+  { time:'21:53:48', date:'05-10', no:'003', league:'英超', home:'利物浦', away:'切尔西', hg:'1.65/3.80/5.00', jc:'1.68/3.85/4.95', current:1.68, change:'+1.82%', changeUp:true, opt:'主胜' },
+  { time:'21:53:48', date:'05-10', no:'005', league:'西甲', home:'巴塞罗那', away:'皇马', hg:'2.30/3.30/3.10', jc:'2.35/3.35/3.05', current:2.35, change:'-2.15%', changeUp:false, opt:'主胜' },
+  { time:'21:53:38', date:'05-10', no:'004', league:'英超', home:'阿森纳', away:'曼联', hg:'2.05/3.40/3.60', jc:'2.12/3.45/3.55', current:3.45, change:'+0.87%', changeUp:true, opt:'平局' },
+  { time:'21:53:38', date:'05-10', no:'007', league:'德甲', home:'拜仁', away:'多特', hg:'1.55/4.20/5.50', jc:'1.58/4.25/5.45', current:1.58, change:'+0.55%', changeUp:true, opt:'主胜' },
+  { time:'21:53:28', date:'05-10', no:'008', league:'荷甲', home:'阿贾克斯', away:'费耶诺德', hg:'1.95/3.60/3.50', jc:'2.00/3.62/3.48', current:3.62, change:'-3.22%', changeUp:false, opt:'平局' },
+  { time:'21:53:28', date:'05-10', no:'003', league:'英超', home:'利物浦', away:'切尔西', hg:'1.65/3.80/5.00', jc:'1.68/3.85/4.95', current:4.95, change:'-1.15%', changeUp:false, opt:'客胜' },
+];
+
+const mock2x1 = [
+  { time:'05-10 21:53', m1:'003 英超 利物浦vs切尔西', o1:'主胜', r1:1.68, m2:'007 德甲 拜仁vs多特', o2:'主胜', r2:1.58, total:2.65, bet:100, win:265, result:null },
+  { time:'05-10 21:53', m1:'004 英超 阿森纳vs曼联', o1:'平局', r1:3.45, m2:'008 荷甲 阿贾克斯vs费耶诺德', o2:'平局', r2:3.62, total:12.49, bet:100, win:1249, result:1 },
+  { time:'05-09 18:30', m1:'005 西甲 巴萨vs皇马', o1:'客胜', r1:3.05, m2:'002 韩K联 光州vs江原', o2:'平局', r2:3.22, total:9.82, bet:100, win:982, result:0 },
+  { time:'05-09 18:30', m1:'001 日职联 大阪vs长崎', o1:'主胜', r1:1.90, m2:'006 意甲 AC米兰vs国米', o2:'客胜', r2:2.18, total:4.14, bet:100, win:414, result:1 },
+];
+
+const mockSingle = [
+  { time:'05-10 21:53', match:'003 英超 利物浦vs切尔西', opt:'主胜', odds:1.68, hg:1.65, change:1.82, bet:100, win:168, result:null },
+  { time:'05-10 21:53', match:'007 德甲 拜仁vs多特', opt:'主胜', odds:1.58, hg:1.55, change:1.35, bet:100, win:158, result:null },
+  { time:'05-09 18:30', match:'004 英超 阿森纳vs曼联', opt:'平局', odds:3.45, hg:3.40, change:0.87, bet:100, win:345, result:1 },
+  { time:'05-09 18:30', match:'005 西甲 巴萨vs皇马', opt:'客胜', odds:3.05, hg:3.10, change:-1.62, bet:100, win:305, result:0 },
+  { time:'05-08 15:20', match:'001 日职联 大阪vs长崎', opt:'主胜', odds:1.90, hg:1.82, change:4.40, bet:100, win:190, result:1 },
+];
+
+const mockFall = [
+  { time:'05-10 21:53', match:'008 荷甲 阿贾克斯vs费耶诺德', opt:'平局', odds:3.62, hg:3.50, change:-3.22, bet:100, win:362, result:null },
+  { time:'05-10 21:48', match:'005 西甲 巴萨vs皇马', opt:'主胜', odds:2.35, hg:2.30, change:-2.15, bet:100, win:235, result:null },
+  { time:'05-09 18:30', match:'003 英超 利物浦vs切尔西', opt:'客胜', odds:4.95, hg:5.00, change:-4.80, bet:100, win:495, result:1 },
+];
+
+const mockDraw = [
+  { time:'05-10 21:53', match:'004 英超 阿森纳vs曼联', opt:'平局', odds:3.45, hg:3.40, change:0.87, bet:100, win:345, result:null },
+  { time:'05-10 21:53', match:'008 荷甲 阿贾克斯vs费耶诺德', opt:'平局', odds:3.62, hg:3.50, change:-3.22, bet:100, win:362, result:null },
+  { time:'05-09 18:30', match:'002 韩K联 光州FCvs江原FC', opt:'平局', odds:3.22, hg:3.20, change:0.62, bet:100, win:322, result:1 },
+  { time:'05-08 15:20', match:'006 意甲 AC米兰vs国米', opt:'平局', odds:3.15, hg:3.10, change:1.62, bet:100, win:315, result:0 },
+];
+
+const mockChanges = [
+  { time:'21:53:48', league:'英超', home:'利物浦', away:'切尔西', type:'主胜', from:1.65, to:1.68, isUp:true },
+  { time:'21:53:38', league:'西甲', home:'巴萨', away:'皇马', type:'平局', from:3.30, to:3.35, isUp:true },
+  { time:'21:53:28', league:'德甲', home:'拜仁', away:'多特', type:'客胜', from:5.50, to:5.45, isUp:false },
+  { time:'21:53:18', league:'荷甲', home:'阿贾克斯', away:'费耶诺德', type:'主胜', from:1.95, to:2.00, isUp:true },
+  { time:'21:53:08', league:'英超', home:'阿森纳', away:'曼联', type:'平局', from:3.40, to:3.45, isUp:true },
+];
+
+// ===== 渲染函数 =====
+function renderMatches() {
+  const grid = document.getElementById('matchGrid');
+  grid.innerHTML = mockMatches.map(m => {
+    const hh = m.jh > m.h, hd = m.jd > m.d, ha = m.ja > m.a;
+    const hgTag = m.hg !== '--' ? `<span class="badge badge-win" style="margin-left:8px;">${m.hg}有利</span>` : '';
+    const countdown = Math.floor(Math.random() * 120) + 10;
+    return `
+      <div class="match-card">
+        <div class="card-header">
+          <span class="league-tag">${m.league}</span>
+          <span class="match-no">#${m.no}</span>
+        </div>
+        <div class="teams">
+          <div class="team"><div class="team-name">${m.home}</div></div>
+          <div class="vs">VS</div>
+          <div class="team"><div class="team-name">${m.away}</div></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">
+          开赛: ${m.start} ${hgTag}
+        </div>
+        <div class="odds-row">
+          <div class="odds-item">
+            <div class="odds-label">皇G主</div>
+            <div class="odds-val">${m.h.toFixed(2)}</div>
+          </div>
+          <div class="odds-item">
+            <div class="odds-label">皇G平</div>
+            <div class="odds-val">${m.d.toFixed(2)}</div>
+          </div>
+          <div class="odds-item">
+            <div class="odds-label">皇G客</div>
+            <div class="odds-val">${m.a.toFixed(2)}</div>
+          </div>
+        </div>
+        <div class="odds-row">
+          <div class="odds-item">
+            <div class="odds-label">竞彩主</div>
+            <div class="odds-val ${hh?'highlight':''}">${m.jh.toFixed(2)}${hh?' ↑':''}</div>
+          </div>
+          <div class="odds-item">
+            <div class="odds-label">竞彩平</div>
+            <div class="odds-val ${hd?'highlight':''}">${m.jd.toFixed(2)}${hd?' ↑':''}</div>
+          </div>
+          <div class="odds-item">
+            <div class="odds-label">竞彩客</div>
+            <div class="odds-val ${ha?'highlight':''}">${m.ja.toFixed(2)}${ha?' ↑':''}</div>
+          </div>
+        </div>
+        <div class="countdown-bar"><div class="fill" style="width: ${countdown}%"></div></div>
+        <div class="card-footer">
+          <span>⏱ 距开赛约 ${Math.floor(countdown/5)} 分钟</span>
+          <span style="color:var(--accent-cyan);">赔率更新时间: ${m.start}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderValueBets() {
+  const tbody = document.getElementById('valueTableBody');
+  tbody.innerHTML = mockValueBets.map(v => `
+    <tr>
+      <td style="color:var(--text-muted)">${v.time}</td>
+      <td style="color:var(--text-muted)">${v.date}</td>
+      <td>${v.no}</td>
+      <td style="color:var(--accent-cyan)">${v.league}</td>
+      <td>${v.home} vs ${v.away}</td>
+      <td style="font-size:12px;">${v.hg}</td>
+      <td style="font-size:12px;">${v.jc}</td>
+      <td class="odds-highlight">${v.current.toFixed(2)}</td>
+      <td class="${v.changeUp ? 'change-up' : 'change-down'}">${v.change}</td>
+      <td><span class="badge ${v.opt==='平局'?'badge-draw':v.opt==='主胜'?'badge-win':'badge-loss'}">${v.opt}</span></td>
+    </tr>`).join('');
+}
+
+function renderBacktest2x1() {
+  document.getElementById('table-2x1').innerHTML = mock2x1.map(b => {
+    const rTag = b.result===1?'<span class="tag tag-hit">已中</span>':b.result===0?'<span class="tag tag-miss">未中</span>':'<span class="tag tag-pending">待确认</span>';
+    const prize = b.result===1?b.win:b.result===0?'0':'--';
+    const btns = b.result===null
+      ? '<button class="action-btn">中</button><button class="action-btn">否</button>'
+      : '';
+    return `<tr>
+      <td style="color:var(--text-muted)">${b.time}</td>
+      <td style="text-align:left;font-size:11px">${b.m1}</td><td>${b.o1}</td><td class="odds-highlight">${b.r1.toFixed(2)}</td>
+      <td style="text-align:left;font-size:11px">${b.m2}</td><td>${b.o2}</td><td class="odds-highlight">${b.r2.toFixed(2)}</td>
+      <td>${b.total.toFixed(2)}</td><td>${b.bet}</td><td>${b.win}</td>
+      <td>${rTag} ${btns}</td>
+      <td><button class="action-btn danger">删</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderBacktestSingle() {
+  document.getElementById('table-single').innerHTML = mockSingle.map(s => {
+    const rTag = s.result===1?'<span class="tag tag-hit">已中</span>':s.result===0?'<span class="tag tag-miss">未中</span>':'<span class="tag tag-pending">待确认</span>';
+    const prize = s.result===1?s.win:s.result===0?'0':'--';
+    const ch = s.change>0?'change-up':'change-down';
+    return `<tr>
+      <td style="color:var(--text-muted)">${s.time}</td>
+      <td style="text-align:left;">${s.match}</td><td>${s.opt}</td>
+      <td class="odds-highlight">${s.odds.toFixed(2)}</td><td>${s.hg.toFixed(2)}</td>
+      <td class="${ch}">${s.change>0?'+':''}${s.change.toFixed(2)}%</td>
+      <td>${s.bet}</td><td>${s.win}</td>
+      <td>${rTag}</td><td><button class="action-btn danger">删</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderBacktestFall() {
+  document.getElementById('table-fall').innerHTML = mockFall.map(f => {
+    const rTag = f.result===1?'<span class="tag tag-hit">已中</span>':f.result===0?'<span class="tag tag-miss">未中</span>':'<span class="tag tag-pending">待确认</span>';
+    const prize = f.result===1?f.win:f.result===0?'0':'--';
+    return `<tr>
+      <td style="color:var(--text-muted)">${f.time}</td>
+      <td style="text-align:left;">${f.match}</td><td>${f.opt}</td>
+      <td class="odds-highlight">${f.odds.toFixed(2)}</td><td>${f.hg.toFixed(2)}</td>
+      <td class="change-down">${f.change.toFixed(2)}%</td>
+      <td>${f.bet}</td><td>${f.win}</td>
+      <td>${rTag}</td><td><button class="action-btn danger">删</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderBacktestDraw() {
+  document.getElementById('table-draw').innerHTML = mockDraw.map(d => {
+    const rTag = d.result===1?'<span class="tag tag-hit">已中</span>':d.result===0?'<span class="tag tag-miss">未中</span>':'<span class="tag tag-pending">待确认</span>';
+    const prize = d.result===1?d.win:d.result===0?'0':'--';
+    const ch = d.change>0?'change-up':'change-down';
+    return `<tr>
+      <td style="color:var(--text-muted)">${d.time}</td>
+      <td style="text-align:left;">${d.match}</td><td>${d.opt}</td>
+      <td class="odds-highlight">${d.odds.toFixed(2)}</td><td>${d.hg.toFixed(2)}</td>
+      <td class="${ch}">${d.change>0?'+':''}${d.change.toFixed(2)}%</td>
+      <td>${d.bet}</td><td>${d.win}</td>
+      <td>${rTag}</td><td><button class="action-btn danger">删</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderChanges() {
+  document.getElementById('changesList').innerHTML = mockChanges.map(c => `
+    <div class="change-item">
+      <span class="ci-time">${c.time}</span>
+      <div class="ci-match">
+        <span class="ci-league">${c.league}</span>
+        ${c.home} vs ${c.away}
+      </div>
+      <span class="ci-type ${c.type==='主胜'?'zhushang':'keshang'}">${c.type}</span>
+      <span>${c.from.toFixed(2)}</span>
+      <span class="change-arrow ${c.isUp?'up':'down'}">${c.isUp?'▲':'▼'}</span>
+      <span>${c.to.toFixed(2)}</span>
+    </div>`).join('');
+}
+
+// ===== Tab 切换 =====
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+function switchSubTab(name) {
+  document.querySelectorAll('.subtab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.subtab-panel').forEach(p => { p.style.display = 'none'; p.classList.remove('active'); });
+  event.target.classList.add('active');
+  const el = document.getElementById('subtab-' + name);
+  el.style.display = 'block';
+  el.classList.add('active');
+}
+
+// ===== 初始化 =====
+renderMatches();
+renderValueBets();
+renderBacktest2x1();
+renderBacktestSingle();
+renderBacktestFall();
+renderBacktestDraw();
+renderChanges();
+</script>
+
+</body>
+</html>
