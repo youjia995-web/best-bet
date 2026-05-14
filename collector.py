@@ -50,6 +50,7 @@ SOURCE_OPTIONS = {
 }
 
 _odds_api_io_cache = {"expires_at": 0, "matches": None}
+CHINA_TZ = datetime.timezone(datetime.timedelta(hours=8), "Asia/Shanghai")
 
 
 class OddsApiBudgetError(Exception):
@@ -674,7 +675,7 @@ def _parse_start_time(raw):
     try:
         dt = datetime.datetime.fromisoformat(text)
         if dt.tzinfo:
-            dt = dt.astimezone().replace(tzinfo=None)
+            dt = dt.astimezone(CHINA_TZ).replace(tzinfo=None)
         return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")
     except ValueError:
         date_part = str(raw)[:10]
