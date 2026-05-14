@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 from sqlalchemy.orm import Session
 from models import Match, OddsChange, SessionLocal
+from time_utils import BEIJING_TZ, fromtimestamp_bj, now_bj, today_bj
 from config import (
     API_TIMEOUT, MAX_RETRIES, RETRY_BACKOFF,
     DATA_SOURCE_STATE_FILE, DEFAULT_DATA_SOURCE,
@@ -50,7 +51,7 @@ SOURCE_OPTIONS = {
 }
 
 _odds_api_io_cache = {"expires_at": 0, "matches": None}
-CHINA_TZ = datetime.timezone(datetime.timedelta(hours=8), "Asia/Shanghai")
+CHINA_TZ = BEIJING_TZ
 OKOOO_HISTORY_DAYS = int(os.environ.get("OKOOO_HISTORY_DAYS", "1"))
 OKOOO_FUTURE_DAYS = int(os.environ.get("OKOOO_FUTURE_DAYS", "2"))
 
@@ -206,7 +207,7 @@ def collect_real_data(fetcher=fetch_from_20002028):
         if matches_data is None:
             return False
 
-        now = datetime.datetime.now()
+        now = now_bj()
         time_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
         # 数据新鲜度检查：如果所有 odds_time 都超过 2 小时，提示可能未更新
@@ -595,10 +596,10 @@ def get_odds_api_io_status():
         "min_interval": ODDS_API_IO_MIN_INTERVAL,
         "max_requests_per_cycle": ODDS_API_IO_MAX_REQUESTS_PER_CYCLE,
         "batch_size": ODDS_API_IO_BATCH_SIZE,
-        "last_attempt_at": datetime.datetime.fromtimestamp(last_attempt_at).strftime("%Y-%m-%d %H:%M:%S") if last_attempt_at else None,
-        "last_success_at": datetime.datetime.fromtimestamp(float(state.get("last_success_at") or 0)).strftime("%Y-%m-%d %H:%M:%S") if state.get("last_success_at") else None,
-        "next_allowed_at": datetime.datetime.fromtimestamp(next_allowed_at).strftime("%Y-%m-%d %H:%M:%S") if next_allowed_at > now_ts else None,
-        "cooldown_until": datetime.datetime.fromtimestamp(cooldown_until).strftime("%Y-%m-%d %H:%M:%S") if cooldown_until > now_ts else None,
+        "last_attempt_at": fromtimestamp_bj(last_attempt_at).strftime("%Y-%m-%d %H:%M:%S") if last_attempt_at else None,
+        "last_success_at": fromtimestamp_bj(state.get("last_success_at") or 0).strftime("%Y-%m-%d %H:%M:%S") if state.get("last_success_at") else None,
+        "next_allowed_at": fromtimestamp_bj(next_allowed_at).strftime("%Y-%m-%d %H:%M:%S") if next_allowed_at > now_ts else None,
+        "cooldown_until": fromtimestamp_bj(cooldown_until).strftime("%Y-%m-%d %H:%M:%S") if cooldown_until > now_ts else None,
         "rate_limit_limit": state.get("rate_limit_limit"),
         "rate_limit_remaining": state.get("rate_limit_remaining"),
         "rate_limit_reset": state.get("rate_limit_reset"),
@@ -1168,8 +1169,8 @@ def _parse_okooo_jingcai_html(html, include_ended=True):
 
 def fetch_from_okooo_jingcai(include_ended=True):
     """从澳客竞彩页面提取近期赛程与胜平负 SP。"""
-    today = datetime.datetime.now(CHINA_TZ).date()
-    cutoff = datetime.datetime.now() - datetime.timedelta(hours=2)
+    today = today_bj()
+    cutoff = now_bj() - datetime.timedelta(hours=2)
     urls = [_okooo_url_for_date()]
     for offset in range(-OKOOO_HISTORY_DAYS, OKOOO_FUTURE_DAYS + 1):
         urls.append(_okooo_url_for_date(today + datetime.timedelta(days=offset)))
@@ -1278,7 +1279,7 @@ def fetch_from_20002028_jingcai():
 
 
 def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False, preserve_missing=False):
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = now_bj().strftime("%Y-%m-%d %H:%M:%S")
     row = {
         "match_no": str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
         "league": jc_match.get("leagueAbbName") or jc_match.get("leagueAllName") or "",
@@ -1515,7 +1516,7 @@ def collect_mock_data():
 
     db = SessionLocal()
     try:
-        now = datetime.datetime.now()
+        now = now_bj()
         time_str = now.strftime("%Y-%m-%d %H:%M:%S")
         today_str = now.strftime("%Y-%m-%d")
 

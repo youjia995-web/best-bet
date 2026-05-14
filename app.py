@@ -16,6 +16,7 @@ from collector import (
     collect_data, fetch_status_from_20002028,
     get_data_source, get_odds_api_io_status, get_source_options, set_data_source,
 )
+from time_utils import format_dt_bj, now_bj, today_bj
 from value_detector import detect_value_bets
 from config import (ADMIN_PASSWORD, REFRESH_INTERVAL,
                     BASE_DIR,
@@ -48,7 +49,7 @@ def _collect_and_detect():
     try:
         collect_data()
         detect_value_bets()
-        print(f"[{datetime.datetime.now()}] 采集完成")
+        print(f"[{now_bj()}] 采集完成")
     except Exception as e:
         print(f"定时采集错误: {e}")
 
@@ -108,7 +109,7 @@ def format_backtest(item):
 
 
 def is_resting_now(now: datetime.datetime | None = None) -> bool:
-    now = now or datetime.datetime.now()
+    now = now or now_bj()
     return now.hour in REST_HOURS
 
 
@@ -130,7 +131,7 @@ def odds_dt(m):
 
 def upcoming_matches_query(db: Session):
     matches = db.query(Match).all()
-    cutoff = datetime.datetime.now() - datetime.timedelta(hours=2)
+    cutoff = now_bj() - datetime.timedelta(hours=2)
     upcoming = [m for m in matches if kickoff_dt(m) and kickoff_dt(m) >= cutoff]
     return sorted(
         upcoming,
@@ -143,7 +144,7 @@ def upcoming_matches_query(db: Session):
 @app.get("/api/matches")
 def api_matches(db: Session = Depends(get_db)):
     upcoming = upcoming_matches_query(db)
-    now = datetime.datetime.now()
+    now = now_bj()
 
     return [
         {
@@ -201,7 +202,7 @@ def api_stats(db: Session = Depends(get_db)):
     upcoming = upcoming_matches_query(db)
     total_matches = len(upcoming)
     total_changes = db.query(OddsChange).count()
-    now = datetime.datetime.now()
+    now = now_bj()
     odds_times = [odds_dt(m) for m in upcoming]
     latest_odds_dt = max((dt for dt in odds_times if dt), default=None)
     odds_age_minutes = int((now - latest_odds_dt).total_seconds() // 60) if latest_odds_dt else None
@@ -223,9 +224,9 @@ def api_stats(db: Session = Depends(get_db)):
 
 @app.get("/api/status")
 def api_status():
-    now = datetime.datetime.now()
+    now = now_bj()
     job = scheduler.get_job('collect')
-    next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job and job.next_run_time else None
+    next_run = format_dt_bj(job.next_run_time) if job and job.next_run_time else None
     upstream = fetch_status_from_20002028() if get_data_source() == "20002028" else None
     resting = bool(upstream.get("resting")) if upstream else is_resting_now(now)
     refresh_interval = upstream.get("refresh_interval", REFRESH_INTERVAL) if upstream else REFRESH_INTERVAL
@@ -246,7 +247,7 @@ def api_status():
 
 @app.get("/api/value-bets")
 def api_value_bets(db: Session = Depends(get_db)):
-    today = datetime.date.today().strftime("%Y-%m-%d")
+    today = today_bj().strftime("%Y-%m-%d")
     bets = (db.query(ValueMatch)
             .filter(ValueMatch.created_date == today)
             .order_by(ValueMatch.id.desc())
@@ -296,7 +297,7 @@ def api_backtest_result(item_id: int, result: int = Form(...), password: str = F
         item = db.query(Backtest2x1).filter(Backtest2x1.id == item_id).first()
         if item:
             item.result = result
-            item.result_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            item.result_at = now_bj().strftime("%Y-%m-%d %H:%M:%S")
             db.commit()
         return {"success": True}
     finally:
@@ -352,7 +353,7 @@ def api_single_bet_result(item_id: int, result: int = Form(...), password: str =
         item = db.query(SingleBet).filter(SingleBet.id == item_id).first()
         if item:
             item.result = result
-            item.result_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            item.result_at = now_bj().strftime("%Y-%m-%d %H:%M:%S")
             db.commit()
         return {"success": True}
     finally:
@@ -408,7 +409,7 @@ def api_fall_bet_result(item_id: int, result: int = Form(...), password: str = F
         item = db.query(FallBet).filter(FallBet.id == item_id).first()
         if item:
             item.result = result
-            item.result_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            item.result_at = now_bj().strftime("%Y-%m-%d %H:%M:%S")
             db.commit()
         return {"success": True}
     finally:
@@ -464,7 +465,7 @@ def api_draw_bet_result(item_id: int, result: int = Form(...), password: str = F
         item = db.query(DrawBet).filter(DrawBet.id == item_id).first()
         if item:
             item.result = result
-            item.result_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            item.result_at = now_bj().strftime("%Y-%m-%d %H:%M:%S")
             db.commit()
         return {"success": True}
     finally:
@@ -546,7 +547,7 @@ def generate_backtest(password: str = Form(...)):
     from value_detector import _generate_backtest_combos
     db = SL()
     try:
-        today = datetime.date.today().strftime("%Y-%m-%d")
+        today = today_bj().strftime("%Y-%m-%d")
         eligible = (db.query(ValueMatch)
                     .filter(ValueMatch.created_date == today,
                             ValueMatch.backtest_eligible == 1)
@@ -561,7 +562,7 @@ def generate_backtest(password: str = Form(...)):
                 seen[key] = v
 
         # 全量配对（不受每批次5条限制）
-        created = _generate_backtest_combos(db, list(seen.values()), datetime.datetime.now())
+        created = _generate_backtest_combos(db, list(seen.values()), now_bj())
 
         return {"success": True, "created": created}
     except Exception as e:

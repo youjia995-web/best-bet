@@ -6,13 +6,14 @@ from models import (SessionLocal, Match, ValueMatch,
                     Backtest2x1, SingleBet, FallBet, DrawBet)
 from config import (BACKTEST_2X1_MAX_HUANGG, SINGLE_BET_MAX_HUANGG,
                     FALL_BET_MAX_HUANGG, FALL_BET_MIN_CHANGE, PAIRING_STRATEGY)
+from time_utils import now_bj
 
 
 def detect_value_bets():
     """检测价值投注。每次采集后运行，积累全天记录（与原站一致）"""
     db = SessionLocal()
     try:
-        now = datetime.datetime.now()
+        now = now_bj()
         time_str = now.strftime("%H:%M:%S")
         date_str = now.strftime("%Y-%m-%d")
 
