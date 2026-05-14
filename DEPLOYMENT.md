@@ -2,6 +2,60 @@
 
 这个项目会在后台定时采集数据，并用 SQLite 保存赔率、回测和状态文件。你已经购买阿里云轻量服务器的话，优先用服务器部署，这是最适合长期运行的方式。
 
+## Zeabur 部署
+
+仓库根目录已经包含 `Dockerfile`，Zeabur 会自动识别并用 Docker 部署。启动命令会读取 Zeabur 注入的 `PORT`，并运行：
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port $PORT
+```
+
+### 1. 从 GitHub 创建服务
+
+1. 打开 Zeabur Dashboard。
+2. 创建 Project，选择你购买的 Server / Cloud Service。
+3. 新建 Service，选择 GitHub Repo。
+4. 选择仓库：`youjia995-web/best-bet`。
+5. Root Directory 保持仓库根目录，不要改到子目录。
+
+### 2. 配置环境变量
+
+在 Zeabur 服务的 Environment Variables 里添加：
+
+- `ADMIN_PASSWORD`：后台操作密码，建议改成强密码。
+- `ODDS_API_IO_KEY`：备用数据源 key；如果只用主接口可先留空。
+- `DATA_DIR=/data`
+- `DEFAULT_DATA_SOURCE=odds_api_io`：可选，如果希望云端启动后默认使用备用数据源。
+
+备用源额度保护相关变量可按需添加：
+
+- `ODDS_API_IO_MIN_INTERVAL=180`
+- `ODDS_API_IO_EVENT_LIMIT=300`
+- `ODDS_API_IO_BOOKMAKERS=Bet365,Unibet`
+
+### 3. 挂载持久化 Volume
+
+这个项目默认使用 SQLite。为了避免 Zeabur 重启或重新部署后丢失数据库，请给服务添加 Volume，并挂载到：
+
+```text
+/data
+```
+
+项目会把这些运行文件写到 `/data`：
+
+- `odds_monitor.db`
+- `data_source_state.json`
+- `odds_api_io_state.json`
+- `odds_api_io.key`（如果你不用环境变量，也可以放这里）
+
+### 4. 公开访问
+
+部署成功后，在 Zeabur 的 Networking / Domain 页面生成公开域名或绑定自己的域名。访问 Zeabur 给出的 HTTPS 地址即可打开监控页面。
+
+### 5. 更新部署
+
+以后本地改完代码并推送到 GitHub `main` 分支，Zeabur 会按 GitHub 集成自动重新部署。
+
 ## 阿里云轻量服务器部署
 
 以下命令按 Ubuntu/Debian 系统编写。CentOS/Alibaba Cloud Linux 也可以部署，但安装命令会略有不同。

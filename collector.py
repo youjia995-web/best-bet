@@ -183,7 +183,7 @@ def collect_real_data(fetcher=fetch_from_20002028):
 
         existing = {}
         for m in db.query(Match).all():
-            key = (m.match_date, m.match_no)
+            key = (m.match_date, m.match_no, (m.start_time or "")[:5])
             existing[key] = m
         updated_count = 0
         seen_keys = set()
@@ -196,7 +196,7 @@ def collect_real_data(fetcher=fetch_from_20002028):
             away = m.get("away_team", "")
             match_date = m.get("real_date") or m.get("match_date", "")
             start_time = m.get("start_time", "")
-            seen_keys.add((match_date, match_no))
+            seen_keys.add((match_date, match_no, (start_time or "")[:5]))
             home_odds = m.get("home_odds")
             draw_odds = m.get("draw_odds")
             away_odds = m.get("away_odds")
@@ -205,7 +205,7 @@ def collect_real_data(fetcher=fetch_from_20002028):
             jc_away = m.get("jingcai_away")
             odds_time = m.get("odds_time", time_str)
 
-            match = existing.get((match_date, match_no))
+            match = existing.get((match_date, match_no, (start_time or "")[:5]))
             if match:
                 old_home = match.home_odds or 0
                 old_draw = match.draw_odds or 0
@@ -290,7 +290,7 @@ def collect_real_data(fetcher=fetch_from_20002028):
             cutoff = now - datetime.timedelta(hours=2)
             removed_count = 0
             for match in db.query(Match).all():
-                key = (match.match_date, match.match_no)
+                key = (match.match_date, match.match_no, (match.start_time or "")[:5])
                 if key in seen_keys:
                     continue
                 try:
@@ -305,6 +305,34 @@ def collect_real_data(fetcher=fetch_from_20002028):
                     removed_count += 1
             if removed_count:
                 print(f"  清理非当前竞彩快照比赛: {removed_count} 场")
+
+        duplicate_groups = {}
+        for match in db.query(Match).all():
+            key = (
+                match.match_date,
+                match.match_no,
+                (match.start_time or "")[:5],
+                match.home_team,
+                match.away_team,
+            )
+            duplicate_groups.setdefault(key, []).append(match)
+        deduped_count = 0
+        for rows in duplicate_groups.values():
+            if len(rows) <= 1:
+                continue
+            rows.sort(
+                key=lambda row: (
+                    bool(row.home_odds and row.draw_odds and row.away_odds),
+                    row.odds_time or "",
+                    row.id or 0,
+                ),
+                reverse=True,
+            )
+            for duplicate in rows[1:]:
+                db.delete(duplicate)
+                deduped_count += 1
+        if deduped_count:
+            print(f"  清理重复比赛记录: {deduped_count} 条")
 
         db.commit()
         print(f"[{time_str}] 采集完成: {len(matches_data)} 场比赛, {updated_count} 条更新")
@@ -738,10 +766,38 @@ TEAM_ALIASES = {
     "巴黎圣曼": ["paris saint-germain", "psg", "paris sg"],
     "巴黎圣日耳曼": ["paris saint-germain", "psg", "paris sg"],
     "阿拉维斯": ["alaves", "deportivo alaves"],
+    "巴伦西亚": ["valencia", "valencia cf"],
+    "巴列卡诺": ["rayo vallecano"],
     "巴萨": ["barcelona", "fc barcelona"],
     "巴塞罗那": ["barcelona", "fc barcelona"],
+    "赫罗纳": ["girona", "girona fc"],
+    "皇家社会": ["real sociedad", "real sociedad san sebastian"],
+    "皇马": ["real madrid"],
+    "皇家马德里": ["real madrid"],
+    "皇家奥维耶多": ["real oviedo", "oviedo"],
+    "奥维耶多": ["real oviedo", "oviedo"],
     "赫塔费": ["getafe"],
     "马洛卡": ["mallorca", "real mallorca"],
+    "阿德莱德联": ["adelaide united", "adelaide united fc"],
+    "阿德莱德": ["adelaide united", "adelaide united fc"],
+    "奥克兰FC": ["auckland fc", "auckland"],
+    "奥克兰fc": ["auckland fc", "auckland"],
+    "达曼协定": ["al ittifaq", "al-ittifaq", "al ittifaq fc", "ettifaq"],
+    "吉达联合": ["al ittihad", "al-ittihad", "al ittihad club"],
+    "胡巴尔卡德西亚": ["al qadsiah", "al-qadsiah", "al qadisiya", "al-qadisiya"],
+    "胡巴卡德": ["al qadsiah", "al-qadsiah", "al qadisiya", "al-qadisiya"],
+    "拉斯决心": ["al hazm", "al-hazm"],
+    "达马克": ["damac", "damac fc"],
+    "迈季迈阿宽广": ["al fayha", "al-fayha", "al fayha fc"],
+    "迈季宽广": ["al fayha", "al-fayha", "al fayha fc"],
+    "布赖代合作": ["al taawoun", "al-taawoun", "al taawon"],
+    "布赖合作": ["al taawoun", "al-taawoun", "al taawon"],
+    "利雅得": ["al riyadh", "al-riyadh"],
+    "圣埃蒂安": ["saint etienne", "st etienne", "as saint etienne"],
+    "罗德兹": ["rodez", "rodez aveyron"],
+    "阿斯顿维拉": ["aston villa", "villa"],
+    "维拉": ["aston villa", "villa"],
+    "利物浦": ["liverpool"],
     "町田泽维": ["machida zelvia"],
     "东京绿茵": ["tokyo verdy"],
     "安养fc": ["fc anyang", "anyang"],
@@ -762,6 +818,11 @@ LEAGUE_ALIASES = {
     "英超": ["england", "premier league"],
     "法国甲级联赛": ["france", "ligue 1"],
     "法甲": ["france", "ligue 1"],
+    "澳大利亚超级联赛": ["australia", "a-league"],
+    "澳超": ["australia", "a-league"],
+    "沙特职业联赛": ["saudi", "saudi pro league"],
+    "沙特联": ["saudi", "saudi pro league"],
+    "沙职": ["saudi", "saudi pro league"],
     "意大利杯": ["italy", "coppa italia"],
     "意杯": ["italy", "coppa italia"],
 }
@@ -789,7 +850,14 @@ def _load_team_aliases():
 def _aliases_for(name, aliases):
     values = aliases.get(name) or aliases.get(str(name).lower()) or []
     values = values + [str(name)]
-    return [_normalize_text(v) for v in values if v]
+    normalized = []
+    generic_tokens = {"fc", "cf", "sc", "afc", "club", "team"}
+    for value in values:
+        alias = _normalize_text(value)
+        if not alias or alias in generic_tokens:
+            continue
+        normalized.append(alias)
+    return normalized
 
 
 def _team_match_score(cn_name, en_name, aliases):
@@ -855,6 +923,8 @@ def _match_sporttery_to_odds_event(jc_match, events, aliases):
         reverse_away_score = _team_match_score(jc_match.get("awayTeamAllName") or jc_match.get("awayTeamAbbName"), event.get("home"), aliases)
         if reverse_home_score + reverse_away_score > home_score + away_score:
             home_score, away_score = 0, 0
+        if home_score < 55 or away_score < 55:
+            continue
 
         time_score = max(0, 30 - int(diff_minutes))
         league_obj = event.get("league") if isinstance(event.get("league"), dict) else {}
@@ -1076,13 +1146,21 @@ def fetch_from_odds_api_io():
             if not odds_sets:
                 continue
             primary = odds_sets[0]
-            key = (jc_match.get("matchDate"), str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:])
+            key = (
+                jc_match.get("matchDate"),
+                str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
+                (jc_match.get("matchTime") or "")[:5],
+            )
             matched_rows[key] = _sporttery_row(jc_match, had, primary)
 
         matches = []
         for jc in jingcai_matches:
             jc_match = jc["raw"]
-            key = (jc_match.get("matchDate"), str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:])
+            key = (
+                jc_match.get("matchDate"),
+                str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
+                (jc_match.get("matchTime") or "")[:5],
+            )
             matches.append(matched_rows.get(key) or _sporttery_row(jc_match, jc["had"], clear_stale_odds=True))
 
         matched_count = len(matched_rows)

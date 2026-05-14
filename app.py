@@ -129,9 +129,13 @@ def odds_dt(m):
 
 
 def upcoming_matches_query(db: Session):
-    matches = db.query(Match).order_by(Match.match_date, Match.match_no).all()
+    matches = db.query(Match).all()
     cutoff = datetime.datetime.now() - datetime.timedelta(hours=2)
-    return [m for m in matches if kickoff_dt(m) and kickoff_dt(m) >= cutoff]
+    upcoming = [m for m in matches if kickoff_dt(m) and kickoff_dt(m) >= cutoff]
+    return sorted(
+        upcoming,
+        key=lambda m: (kickoff_dt(m), m.match_no or "", m.id or 0),
+    )
 
 
 # ==================== API 端点 ====================

@@ -12,7 +12,7 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 REFRESH_INTERVAL = 60  # seconds（对标原站）
 REST_HOURS = []  # e.g. [0, 1, 2, 3, 4, 5, 6] to rest during midnight
 DATA_SOURCE_STATE_FILE = os.path.join(DATA_DIR, "data_source_state.json")
-DEFAULT_DATA_SOURCE = "20002028"
+DEFAULT_DATA_SOURCE = os.environ.get("DEFAULT_DATA_SOURCE", "20002028").strip() or "20002028"
 
 # 回测筛选阈值
 BACKTEST_2X1_MAX_HUANGG = 3.5    # 2串1：皇G欧 < 3.5
@@ -42,7 +42,7 @@ ODDS_API_IO_KEY = (
     )
 )
 ODDS_API_IO_BOOKMAKERS = os.environ.get("ODDS_API_IO_BOOKMAKERS", "Bet365,Unibet").strip()
-ODDS_API_IO_EVENT_LIMIT = int(os.environ.get("ODDS_API_IO_EVENT_LIMIT", "120"))
+ODDS_API_IO_EVENT_LIMIT = int(os.environ.get("ODDS_API_IO_EVENT_LIMIT", "300"))
 ODDS_API_IO_CACHE_TTL = int(os.environ.get("ODDS_API_IO_CACHE_TTL", "60"))
 ODDS_API_IO_STATE_FILE = os.path.join(DATA_DIR, "odds_api_io_state.json")
 ODDS_API_IO_FREE_REQUESTS_PER_HOUR = int(os.environ.get("ODDS_API_IO_FREE_REQUESTS_PER_HOUR", "100"))

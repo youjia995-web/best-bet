@@ -1,0 +1,23 @@
+.git
+.gitignore
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Runtime state and secrets
+*.db
+*.log
+*.pid
+*.key
+*_state.json
+data_source_state.json
+.env
+.env.*
+
+# Local-only notes and diagnostics
+.claude/
+scratchpad.md
+debug_*.py
+diagnose_*.py
+original_site_source.html
+ScreenShot_*.png
