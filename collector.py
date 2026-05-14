@@ -23,7 +23,7 @@ from config import (
 )
 
 # 数据源配置
-DATA_SOURCE = DEFAULT_DATA_SOURCE  # 可选: "20002028", "odds_api_io", "mock"
+DATA_SOURCE = DEFAULT_DATA_SOURCE  # 可选: "odds_api_io", "okooo", "20002028", "mock"
 REAL_API_BASE = "https://www.20002028.xyz/jingcai/api"
 
 SOURCE_OPTIONS = {
@@ -33,8 +33,8 @@ SOURCE_OPTIONS = {
         "requires_key": False,
     },
     "odds_api_io": {
-        "name": "备用接口",
-        "description": "竞彩赛程 + Odds-API.io 欧赔",
+        "name": "澳客+欧赔",
+        "description": "澳客竞彩赛程 + Odds-API.io 欧赔",
         "requires_key": True,
     },
     "okooo": {
@@ -1238,7 +1238,7 @@ def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False):
 
 
 def fetch_from_odds_api_io():
-    """从 体彩竞彩 获取赛程/竞彩赔率，再从 Odds-API.io 获取主备博彩公司 1X2 欧赔。"""
+    """从澳客获取赛程/竞彩赔率，再从 Odds-API.io 获取主备博彩公司 1X2 欧赔。"""
     now_ts = time.time()
     if _odds_api_io_cache["matches"] is not None and now_ts < _odds_api_io_cache["expires_at"]:
         return _odds_api_io_cache["matches"]
@@ -1250,30 +1250,19 @@ def fetch_from_odds_api_io():
         print(f"  {message}")
         return None
 
-    jingcai_source_label = "体彩"
+    jingcai_source_label = "澳客"
     try:
-        sporttery_error = ""
         try:
-            jingcai_matches = fetch_from_sporttery_jingcai()
+            jingcai_matches = fetch_from_okooo_jingcai()
         except ExternalApiError as e:
-            sporttery_error = str(e)
-            print(f"  体彩竞彩接口不可用，改用澳客竞彩赛程匹配欧赔: {e}")
+            print(f"  澳客竞彩接口不可用，继续尝试主接口赛程: {e}")
             jingcai_matches = None
-
-        if not jingcai_matches:
-            jingcai_source_label = "澳客"
-            try:
-                jingcai_matches = fetch_from_okooo_jingcai()
-            except ExternalApiError as e:
-                print(f"  澳客竞彩接口不可用，继续尝试主接口赛程: {e}")
-                jingcai_matches = None
 
         if not jingcai_matches:
             jingcai_source_label = "主接口"
             jingcai_matches = fetch_from_20002028_jingcai()
             if not jingcai_matches:
-                detail = f"；体彩接口失败: {sporttery_error}" if sporttery_error else ""
-                message = f"澳客和主接口也未返回可用胜平负比赛{detail}"
+                message = "澳客和主接口也未返回可用胜平负比赛"
                 _set_odds_api_io_status("error", message)
                 print(f"  {message}")
                 return None

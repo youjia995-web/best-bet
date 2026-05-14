@@ -437,7 +437,7 @@ function renderSourceSwitch() {
   }
   wrap.innerHTML = sources.map(s => {
     const active = s.key === dataSourceState.active;
-    const label = s.key === '20002028' ? '主' : s.key === 'odds_api_io' ? '备' : s.key === 'okooo' ? '澳' : '模';
+    const label = s.key === '20002028' ? '主' : s.key === 'odds_api_io' ? '欧' : s.key === 'okooo' ? '澳' : '模';
     const cls = ['source-btn', active ? 'active' : '', !s.configured ? 'warning' : ''].filter(Boolean).join(' ');
     const title = `${s.name}${s.configured ? '' : '：未配置 API Key'}`;
     return `<button class="${cls}" title="${title}" onclick="switchDataSource('${s.key}')" ${active ? 'disabled' : ''}>${label}</button>`;

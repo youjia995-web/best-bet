@@ -12,7 +12,7 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 REFRESH_INTERVAL = 60  # seconds（对标原站）
 REST_HOURS = []  # e.g. [0, 1, 2, 3, 4, 5, 6] to rest during midnight
 DATA_SOURCE_STATE_FILE = os.path.join(DATA_DIR, "data_source_state.json")
-DEFAULT_DATA_SOURCE = os.environ.get("DEFAULT_DATA_SOURCE", "20002028").strip() or "20002028"
+DEFAULT_DATA_SOURCE = os.environ.get("DEFAULT_DATA_SOURCE", "odds_api_io").strip() or "odds_api_io"
 
 # 回测筛选阈值
 BACKTEST_2X1_MAX_HUANGG = 3.5    # 2串1：皇G欧 < 3.5
