@@ -177,13 +177,21 @@ def upcoming_matches_query(db: Session):
 
 
 def beidan_upcoming_matches_query(db: Session):
+    init_db()
     matches = db.query(BeidanMatch).all()
     cutoff = now_bj() - datetime.timedelta(hours=2)
     upcoming = [m for m in matches if kickoff_dt(m) and kickoff_dt(m) >= cutoff]
     return sorted(
         upcoming,
-        key=lambda m: (kickoff_dt(m), int(m.match_no or 0), m.id or 0),
+        key=lambda m: (kickoff_dt(m), _safe_int(m.match_no), m.id or 0),
     )
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 # ==================== API 端点 ====================
@@ -534,130 +542,163 @@ def api_draw_bet_delete(item_id: int, password: str):
 
 @app.get("/api/beidan/matches")
 def api_beidan_matches(db: Session = Depends(get_db)):
-    upcoming = beidan_upcoming_matches_query(db)
-    now = now_bj()
-    return [
-        {
-            "id": m.id,
-            "issue_num": m.issue_num,
-            "match_no": m.match_no,
-            "league": m.league,
-            "real_date": m.match_date,
-            "start_time": m.start_time,
-            "stop_time": m.stop_time,
-            "handicap": m.handicap,
-            "home_team": m.home_team,
-            "away_team": m.away_team,
-            "status": m.status,
-            "date_str": m.match_date,
-            "home_odds": m.home_odds,
-            "draw_odds": m.draw_odds,
-            "away_odds": m.away_odds,
-            "beidan_home": m.beidan_home,
-            "beidan_draw": m.beidan_draw,
-            "beidan_away": m.beidan_away,
-            "odds_time": m.odds_time,
-            "odds_missing": not (m.home_odds and m.draw_odds and m.away_odds),
-            "odds_age_minutes": (
-                int((now - odds_dt(m)).total_seconds() // 60)
-                if odds_dt(m)
-                else None
-            ),
-            "odds_stale": (
-                odds_dt(m) is None
-                or int((now - odds_dt(m)).total_seconds() // 60) > 20
-            ),
-        }
-        for m in upcoming
-    ]
+    try:
+        upcoming = beidan_upcoming_matches_query(db)
+        now = now_bj()
+        return [
+            {
+                "id": m.id,
+                "issue_num": m.issue_num,
+                "match_no": m.match_no,
+                "league": m.league,
+                "real_date": m.match_date,
+                "start_time": m.start_time,
+                "stop_time": m.stop_time,
+                "handicap": m.handicap,
+                "home_team": m.home_team,
+                "away_team": m.away_team,
+                "status": m.status,
+                "date_str": m.match_date,
+                "home_odds": m.home_odds,
+                "draw_odds": m.draw_odds,
+                "away_odds": m.away_odds,
+                "beidan_home": m.beidan_home,
+                "beidan_draw": m.beidan_draw,
+                "beidan_away": m.beidan_away,
+                "odds_time": m.odds_time,
+                "odds_missing": not (m.home_odds and m.draw_odds and m.away_odds),
+                "odds_age_minutes": (
+                    int((now - odds_dt(m)).total_seconds() // 60)
+                    if odds_dt(m)
+                    else None
+                ),
+                "odds_stale": (
+                    odds_dt(m) is None
+                    or int((now - odds_dt(m)).total_seconds() // 60) > 20
+                ),
+            }
+            for m in upcoming
+        ]
+    except Exception as e:
+        print(f"北单比赛接口错误: {e}")
+        return []
 
 
 @app.get("/api/beidan/changes")
 def api_beidan_changes(db: Session = Depends(get_db)):
-    changes = db.query(BeidanOddsChange).order_by(BeidanOddsChange.time.desc()).limit(30).all()
-    return [
-        {
-            "time": c.time,
-            "league": c.league,
-            "home": c.home,
-            "away": c.away,
-            "change_type": c.change_type,
-            "from": c.from_odds,
-            "to": c.to_odds,
-            "odds": c.odds,
-        }
-        for c in changes
-    ]
+    try:
+        init_db()
+        changes = db.query(BeidanOddsChange).order_by(BeidanOddsChange.time.desc()).limit(30).all()
+        return [
+            {
+                "time": c.time,
+                "league": c.league,
+                "home": c.home,
+                "away": c.away,
+                "change_type": c.change_type,
+                "from": c.from_odds,
+                "to": c.to_odds,
+                "odds": c.odds,
+            }
+            for c in changes
+        ]
+    except Exception as e:
+        print(f"北单变化接口错误: {e}")
+        return []
 
 
 @app.get("/api/beidan/stats")
 def api_beidan_stats(db: Session = Depends(get_db)):
-    upcoming = beidan_upcoming_matches_query(db)
-    total_matches = len(upcoming)
-    total_changes = db.query(BeidanOddsChange).count()
-    now = now_bj()
-    odds_times = [odds_dt(m) for m in upcoming]
-    latest_odds_dt = max((dt for dt in odds_times if dt), default=None)
-    odds_age_minutes = int((now - latest_odds_dt).total_seconds() // 60) if latest_odds_dt else None
-    stale_count = sum(
-        1
-        for dt in odds_times
-        if dt is None or int((now - dt).total_seconds() // 60) > 20
-    )
-    value_count = db.query(BeidanValueMatch).filter(BeidanValueMatch.created_date == today_bj().strftime("%Y-%m-%d")).count()
-    return {
-        "total_matches": total_matches,
-        "total_changes": total_changes,
-        "value_count": value_count,
-        "latest_odds_time": latest_odds_dt.strftime("%Y-%m-%d %H:%M:%S") if latest_odds_dt else None,
-        "odds_age_minutes": odds_age_minutes,
-        "stale_matches": stale_count,
-        "fresh_matches": max(0, total_matches - stale_count),
-        "data_stale": stale_count > 0,
-    }
+    try:
+        upcoming = beidan_upcoming_matches_query(db)
+        total_matches = len(upcoming)
+        total_changes = db.query(BeidanOddsChange).count()
+        now = now_bj()
+        odds_times = [odds_dt(m) for m in upcoming]
+        latest_odds_dt = max((dt for dt in odds_times if dt), default=None)
+        odds_age_minutes = int((now - latest_odds_dt).total_seconds() // 60) if latest_odds_dt else None
+        stale_count = sum(
+            1
+            for dt in odds_times
+            if dt is None or int((now - dt).total_seconds() // 60) > 20
+        )
+        value_count = db.query(BeidanValueMatch).filter(BeidanValueMatch.created_date == today_bj().strftime("%Y-%m-%d")).count()
+        return {
+            "total_matches": total_matches,
+            "total_changes": total_changes,
+            "value_count": value_count,
+            "latest_odds_time": latest_odds_dt.strftime("%Y-%m-%d %H:%M:%S") if latest_odds_dt else None,
+            "odds_age_minutes": odds_age_minutes,
+            "stale_matches": stale_count,
+            "fresh_matches": max(0, total_matches - stale_count),
+            "data_stale": stale_count > 0,
+        }
+    except Exception as e:
+        print(f"北单统计接口错误: {e}")
+        return {
+            "total_matches": 0,
+            "total_changes": 0,
+            "value_count": 0,
+            "latest_odds_time": None,
+            "odds_age_minutes": None,
+            "stale_matches": 0,
+            "fresh_matches": 0,
+            "data_stale": True,
+            "error": str(e),
+        }
 
 
 @app.get("/api/beidan/value-bets")
 def api_beidan_value_bets(db: Session = Depends(get_db)):
-    today = today_bj().strftime("%Y-%m-%d")
-    bets = (db.query(BeidanValueMatch)
-            .filter(BeidanValueMatch.created_date == today)
-            .order_by(BeidanValueMatch.id.desc())
-            .all())
-    return {
-        "value_matches": [
-            {
-                "id": v.id,
-                "match_id": v.match_id,
-                "capture_time": v.capture_time,
-                "created_date": v.created_date,
-                "match_no": v.match_no,
-                "league": v.league,
-                "home_team": v.home_team,
-                "away_team": v.away_team,
-                "match_date": v.match_date,
-                "start_time": v.start_time,
-                "huangg_odds": v.huangg_odds,
-                "jingcai_odds": v.jingcai_odds,
-                "selected_option": v.selected_option,
-                "backtest_odds": v.backtest_odds,
-                "huangg_option": v.huangg_option,
-                "huangg_home": v.huangg_home,
-                "huangg_draw": v.huangg_draw,
-                "huangg_away": v.huangg_away,
-                "current_odds": v.current_odds,
-                "change_pct": v.change_pct,
-                "backtest_eligible": v.backtest_eligible,
-            }
-            for v in bets
-        ]
-    }
+    try:
+        init_db()
+        today = today_bj().strftime("%Y-%m-%d")
+        bets = (db.query(BeidanValueMatch)
+                .filter(BeidanValueMatch.created_date == today)
+                .order_by(BeidanValueMatch.id.desc())
+                .all())
+        return {
+            "value_matches": [
+                {
+                    "id": v.id,
+                    "match_id": v.match_id,
+                    "capture_time": v.capture_time,
+                    "created_date": v.created_date,
+                    "match_no": v.match_no,
+                    "league": v.league,
+                    "home_team": v.home_team,
+                    "away_team": v.away_team,
+                    "match_date": v.match_date,
+                    "start_time": v.start_time,
+                    "huangg_odds": v.huangg_odds,
+                    "jingcai_odds": v.jingcai_odds,
+                    "selected_option": v.selected_option,
+                    "backtest_odds": v.backtest_odds,
+                    "huangg_option": v.huangg_option,
+                    "huangg_home": v.huangg_home,
+                    "huangg_draw": v.huangg_draw,
+                    "huangg_away": v.huangg_away,
+                    "current_odds": v.current_odds,
+                    "change_pct": v.change_pct,
+                    "backtest_eligible": v.backtest_eligible,
+                }
+                for v in bets
+            ]
+        }
+    except Exception as e:
+        print(f"北单价值接口错误: {e}")
+        return {"value_matches": []}
 
 
 @app.get("/api/beidan/backtest")
 def api_beidan_backtest(db: Session = Depends(get_db)):
-    items = db.query(BeidanBacktest2x1).order_by(BeidanBacktest2x1.id.desc()).all()
-    return [format_backtest(item) for item in items]
+    try:
+        init_db()
+        items = db.query(BeidanBacktest2x1).order_by(BeidanBacktest2x1.id.desc()).all()
+        return [format_backtest(item) for item in items]
+    except Exception as e:
+        print(f"北单2串1接口错误: {e}")
+        return []
 
 
 @app.post("/api/beidan/backtest/{item_id}")
@@ -672,7 +713,12 @@ def api_beidan_backtest_delete(item_id: int, password: str):
 
 @app.get("/api/beidan/single-bet")
 def api_beidan_single_bet(db: Session = Depends(get_db)):
-    return [format_bet_item(item) for item in db.query(BeidanSingleBet).order_by(BeidanSingleBet.id.desc()).all()]
+    try:
+        init_db()
+        return [format_bet_item(item) for item in db.query(BeidanSingleBet).order_by(BeidanSingleBet.id.desc()).all()]
+    except Exception as e:
+        print(f"北单单关接口错误: {e}")
+        return []
 
 
 @app.post("/api/beidan/single-bet/{item_id}")
@@ -687,7 +733,12 @@ def api_beidan_single_bet_delete(item_id: int, password: str):
 
 @app.get("/api/beidan/fall-bet")
 def api_beidan_fall_bet(db: Session = Depends(get_db)):
-    return [format_bet_item(item) for item in db.query(BeidanFallBet).order_by(BeidanFallBet.id.desc()).all()]
+    try:
+        init_db()
+        return [format_bet_item(item) for item in db.query(BeidanFallBet).order_by(BeidanFallBet.id.desc()).all()]
+    except Exception as e:
+        print(f"北单跌水接口错误: {e}")
+        return []
 
 
 @app.post("/api/beidan/fall-bet/{item_id}")
@@ -702,7 +753,12 @@ def api_beidan_fall_bet_delete(item_id: int, password: str):
 
 @app.get("/api/beidan/draw-bet")
 def api_beidan_draw_bet(db: Session = Depends(get_db)):
-    return [format_bet_item(item) for item in db.query(BeidanDrawBet).order_by(BeidanDrawBet.id.desc()).all()]
+    try:
+        init_db()
+        return [format_bet_item(item) for item in db.query(BeidanDrawBet).order_by(BeidanDrawBet.id.desc()).all()]
+    except Exception as e:
+        print(f"北单平局接口错误: {e}")
+        return []
 
 
 @app.post("/api/beidan/draw-bet/{item_id}")

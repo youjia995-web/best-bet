@@ -263,6 +263,7 @@ let latestStats = {};
 const openDateGroups = new Set();
 let initializedGroups = false;
 let countdown = 30;
+let lastFetchHadError = false;
 
 function tick() {
   const now = new Date();
@@ -293,16 +294,29 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-function fetchData() {
+function fetchJson(path, fallback) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  return fetch(path, { signal: controller.signal })
+    .then(r => r.ok ? r.json() : fallback)
+    .catch(() => {
+      lastFetchHadError = true;
+      return fallback;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+async function fetchData() {
+  lastFetchHadError = false;
   Promise.all([
-    fetch('api/beidan/matches').then(r => r.ok ? r.json() : []),
-    fetch('api/beidan/changes').then(r => r.ok ? r.json() : []),
-    fetch('api/beidan/stats').then(r => r.ok ? r.json() : {}),
-    fetch('api/beidan/value-bets').then(r => r.ok ? r.json() : {value_matches: []}),
-    fetch('api/beidan/backtest').then(r => r.ok ? r.json() : []),
-    fetch('api/beidan/single-bet').then(r => r.ok ? r.json() : []),
-    fetch('api/beidan/fall-bet').then(r => r.ok ? r.json() : []),
-    fetch('api/beidan/draw-bet').then(r => r.ok ? r.json() : [])
+    fetchJson('/api/beidan/matches', []),
+    fetchJson('/api/beidan/changes', []),
+    fetchJson('/api/beidan/stats', {}),
+    fetchJson('/api/beidan/value-bets', {value_matches: []}),
+    fetchJson('/api/beidan/backtest', []),
+    fetchJson('/api/beidan/single-bet', []),
+    fetchJson('/api/beidan/fall-bet', []),
+    fetchJson('/api/beidan/draw-bet', [])
   ]).then(([matches, changes, stats, valueBets, backtest, singleBet, fallBet, drawBet]) => {
     latestStats = stats || {};
     updateStats(stats);
@@ -313,9 +327,10 @@ function fetchData() {
     renderBacktestTable(fallBet, 'table-fall', 'profit-fall', 'fall-bet');
     renderBacktestTable(drawBet, 'table-draw', 'profit-draw', 'draw-bet');
     updateChanges(changes);
-    document.getElementById('statusLabel').textContent = '运行中';
+    document.getElementById('statusLabel').textContent = lastFetchHadError ? '部分接口失败' : '运行中';
   }).catch(() => {
     document.getElementById('statusLabel').textContent = '加载失败';
+    document.getElementById('matchGroups').innerHTML = '<div class="no-data">北单接口暂时不可用，请稍后刷新或手动采集</div>';
   });
 }
 
@@ -404,7 +419,7 @@ function renderMatchCard(m) {
 function toggleDateGroup(date) {
   if (openDateGroups.has(date)) openDateGroups.delete(date);
   else openDateGroups.add(date);
-  fetch('api/beidan/matches').then(r => r.json()).then(updateMatches);
+  fetchJson('/api/beidan/matches', []).then(updateMatches);
 }
 
 function updateValueBets(data) {
@@ -524,7 +539,7 @@ function verifyPassword() {
 function setResult(type, id, result) {
   const pwd = verifyPassword();
   if (!pwd) return;
-  fetch(`api/beidan/${type}/${id}`, {
+  fetch(`/api/beidan/${type}/${id}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `result=${result}&password=${encodeURIComponent(pwd)}`
@@ -536,12 +551,12 @@ function setResult(type, id, result) {
 function deleteItem(type, id) {
   const pwd = verifyPassword();
   if (!pwd || !confirm('确定删除这条记录？')) return;
-  fetch(`api/beidan/${type}/${id}?password=${encodeURIComponent(pwd)}`, { method: 'DELETE' })
+  fetch(`/api/beidan/${type}/${id}?password=${encodeURIComponent(pwd)}`, { method: 'DELETE' })
     .then(r => r.json()).then(data => { if (data.success) fetchData(); else if (data.error) alert(data.error); });
 }
 function triggerCollect() {
   document.getElementById('statusLabel').textContent = '采集中...';
-  fetch('api/beidan/collect', { method: 'POST' }).then(r => r.json()).then(d => {
+  fetchJson('/api/beidan/collect', { success: false }).then(d => {
     document.getElementById('statusLabel').textContent = d.success ? '采集完成' : '采集失败';
     fetchData();
   });
