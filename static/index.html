@@ -277,6 +277,7 @@
     <div class="status-dot online" id="statusDot"></div>
     <span style="font-size:12px;color:var(--text-secondary);" id="statusLabel">--</span>
     <span style="font-size:12px;color:var(--text-muted);" id="nextLabel">--</span>
+    <button class="topbar-btn" onclick="location.href='/beidan'">北单</button>
     <button class="topbar-btn" onclick="exportAll()">导出</button>
     <button class="topbar-btn primary" onclick="triggerCollect()">手动采集</button>
   </div>
@@ -437,7 +438,7 @@ function renderSourceSwitch() {
   }
   wrap.innerHTML = sources.map(s => {
     const active = s.key === dataSourceState.active;
-    const label = s.key === '20002028' ? '主' : s.key === 'odds_api_io' ? '欧' : s.key === 'huangguan' ? '皇' : s.key === 'okooo' ? '澳' : '模';
+    const label = s.key === '20002028' ? '主' : s.key === 'odds_api_io' ? '欧' : s.key === 'nowscore_crown' ? '皇' : s.key === 'okooo' ? '澳' : '模';
     const cls = ['source-btn', active ? 'active' : '', !s.configured ? 'warning' : ''].filter(Boolean).join(' ');
     const title = `${s.name}${s.configured ? '' : '：未配置 API Key'}`;
     return `<button class="${cls}" title="${title}" onclick="switchDataSource('${s.key}')" ${active ? 'disabled' : ''}>${label}</button>`;
@@ -546,7 +547,7 @@ function updateMatches(matches) {
     return;
   }
   const now = new Date();
-  const oddsSourceLabel = dataSourceState.active === 'huangguan' ? '皇冠' : '欧盘';
+  const oddsSourceLabel = dataSourceState.active === 'nowscore_crown' ? '皇冠' : '欧盘';
   grid.innerHTML = matches.map(m => {
     const hh = m.jingcai_home && m.home_odds && m.jingcai_home > m.home_odds;
     const hd = m.jingcai_draw && m.draw_odds && m.jingcai_draw > m.draw_odds;

@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>北单监控</title>
+<style>
+  :root {
+    --bg-primary: #0a0e1a;
+    --bg-secondary: #111827;
+    --bg-card: rgba(255,255,255,0.03);
+    --border: rgba(255,255,255,0.06);
+    --text-primary: #e5e7eb;
+    --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+    --accent-green: #00e676;
+    --accent-gold: #f59e0b;
+    --accent-red: #ff6b6b;
+    --accent-blue: #60a5fa;
+    --accent-cyan: #22d3ee;
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(135deg, #0a0e1a 0%, #111827 54%, #0f172a 100%);
+    color: var(--text-primary);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+  .topbar {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; min-height: 56px;
+    background: rgba(17,24,39,0.86); backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-logo { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; }
+  .topbar-logo .green { color: var(--accent-green); }
+  .topbar-clock {
+    font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .topbar-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+  .topbar-btn {
+    padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text-primary); cursor: pointer;
+    font-size: 13px; font-family: inherit; transition: all 0.2s;
+    min-height: 34px;
+  }
+  .topbar-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+  .topbar-btn.primary { background: var(--accent-green); color: #000; border: none; font-weight: 600; }
+  .main { max-width: 1440px; margin: 0 auto; padding: 24px; }
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+  .stat-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px; backdrop-filter: blur(10px);
+  }
+  .stat-card .label { font-size: 12px; color: var(--text-muted); letter-spacing: 0.4px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 5px; font-variant-numeric: tabular-nums; }
+  .stat-card .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .tab-nav {
+    display: flex; gap: 4px; margin-bottom: 20px;
+    background: var(--bg-card); border-radius: var(--radius); padding: 4px; border: 1px solid var(--border);
+  }
+  .tab-btn {
+    flex: 1; min-height: 42px; padding: 10px 20px; border: none; border-radius: 8px;
+    background: transparent; color: var(--text-secondary); cursor: pointer;
+    font-size: 14px; font-weight: 500; font-family: inherit; transition: all 0.25s;
+  }
+  .tab-btn.active { background: rgba(0,230,118,0.1); color: var(--accent-green); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .date-section {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: rgba(255,255,255,0.02); margin-bottom: 14px; overflow: hidden;
+  }
+  .date-toggle {
+    width: 100%; min-height: 46px; border: none; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.025); color: var(--text-primary); cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 0 16px; font: inherit; text-align: left;
+  }
+  .date-toggle strong { font-size: 15px; }
+  .date-toggle span { color: var(--text-muted); font-size: 12px; }
+  .date-section.collapsed .date-body { display: none; }
+  .match-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; padding: 14px; }
+  .match-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 15px; transition: border-color 0.2s;
+  }
+  .match-card:hover { border-color: rgba(255,255,255,0.14); }
+  .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
+  .league-tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    background: rgba(34,211,238,0.1); color: var(--accent-cyan);
+  }
+  .match-no { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .teams { display: grid; grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr); align-items: center; margin-bottom: 10px; }
+  .team-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; text-align: center; }
+  .vs { font-size: 12px; color: var(--text-muted); text-align: center; }
+  .meta-line { display: flex; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 11px; margin-bottom: 10px; }
+  .odds-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 7px; }
+  .odds-item { text-align: center; padding: 6px 4px; border-radius: 6px; background: rgba(255,255,255,0.035); }
+  .odds-label { color: var(--text-muted); font-size: 10px; margin-bottom: 2px; }
+  .odds-val { font-weight: 650; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .odds-val.highlight { color: var(--accent-green); }
+  .odds-diff-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .odds-diff {
+    min-height: 38px; padding: 6px 5px; border-radius: 6px;
+    background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.04);
+    text-align: center; font-size: 10px; color: var(--text-muted);
+  }
+  .odds-diff strong { display: block; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .odds-diff.up strong { color: var(--accent-green); }
+  .odds-diff.down strong { color: var(--accent-red); }
+  .odds-diff.same strong { color: var(--text-secondary); }
+  .card-footer {
+    display: flex; justify-content: space-between; gap: 10px; align-items: center;
+    font-size: 11px; color: var(--text-muted); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  .stale-badge {
+    display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 4px;
+    background: rgba(245,158,11,0.12); color: var(--accent-gold); font-size: 10px;
+  }
+  .subtab-nav {
+    display: flex; gap: 2px; margin-bottom: 16px;
+    background: rgba(255,255,255,0.02); border-radius: var(--radius-sm); padding: 3px; width: fit-content;
+  }
+  .subtab-btn {
+    min-height: 34px; padding: 6px 16px; border: none; border-radius: 6px;
+    background: transparent; color: var(--text-muted); cursor: pointer;
+    font-size: 13px; font-family: inherit;
+  }
+  .subtab-btn.active { background: rgba(245,158,11,0.15); color: var(--accent-gold); }
+  .table-wrap, .changes-panel {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto;
+  }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+  th {
+    padding: 9px 10px; color: var(--text-muted); font-size: 11px; font-weight: 500;
+    border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.02); white-space: nowrap;
+  }
+  td { padding: 10px; text-align: center; border-bottom: 1px solid var(--border); }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+  .badge-win { background: rgba(0,230,118,0.15); color: var(--accent-green); }
+  .badge-draw { background: rgba(245,158,11,0.15); color: var(--accent-gold); }
+  .badge-loss { background: rgba(255,107,107,0.15); color: var(--accent-red); }
+  .change-up { color: var(--accent-green); }
+  .change-down { color: var(--accent-red); }
+  .odds-highlight { color: var(--accent-gold); font-weight: 650; }
+  .no-data { text-align: center; padding: 32px; color: var(--text-muted); font-size: 13px; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .profit-badge { font-size: 16px; font-weight: 700; padding: 4px 12px; border-radius: var(--radius-sm); }
+  .profit-badge.positive { background: rgba(0,230,118,0.1); color: var(--accent-green); }
+  .profit-badge.negative { background: rgba(255,107,107,0.1); color: var(--accent-red); }
+  .action-btn {
+    min-height: 28px; padding: 4px 9px; border-radius: 4px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-secondary); cursor: pointer;
+    font-size: 11px; font-family: inherit; margin: 2px;
+  }
+  .action-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+  .action-btn.danger:hover { border-color: var(--accent-red); color: var(--accent-red); }
+  .changes-panel { margin-top: 24px; overflow: hidden; }
+  .panel-header {
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    font-size: 13px; font-weight: 600; display: flex; justify-content: space-between;
+  }
+  .change-item { display: flex; align-items: center; padding: 11px 18px; border-bottom: 1px solid var(--border); gap: 12px; }
+  .ci-time { font-size: 12px; color: var(--text-muted); min-width: 64px; }
+  .ci-match { flex: 1; font-size: 13px; overflow-wrap: anywhere; }
+  .ci-league { color: var(--accent-cyan); font-size: 11px; margin-right: 8px; }
+  @media (max-width: 820px) {
+    .topbar { padding: 10px 12px; align-items: flex-start; flex-direction: column; gap: 8px; }
+    .topbar-clock { font-size: 16px; }
+    .main { padding: 14px; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .match-grid { grid-template-columns: 1fr; padding: 10px; }
+    .tab-nav { overflow-x: auto; }
+    .tab-btn { min-width: 110px; }
+    .card-footer, .meta-line { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-logo">
+    <span>北单监控</span>
+    <span class="green">· Crown</span>
+  </div>
+  <div class="topbar-clock" id="clock">--</div>
+  <div class="topbar-right">
+    <span style="font-size:12px;color:var(--text-secondary);" id="statusLabel">加载中</span>
+    <span style="font-size:12px;color:var(--text-muted);" id="nextLabel">--</span>
+    <button class="topbar-btn" onclick="location.href='/'">竞彩主页</button>
+    <button class="topbar-btn primary" onclick="triggerCollect()">手动采集</button>
+  </div>
+</header>
+
+<main class="main">
+  <div class="stats-row">
+    <div class="stat-card"><div class="label">北单比赛</div><div class="value" id="matchCount">0</div><div class="sub">当前未开赛</div></div>
+    <div class="stat-card"><div class="label">价值机会</div><div class="value" id="valueCount">0</div><div class="sub">今日累计</div></div>
+    <div class="stat-card"><div class="label">赔率变化</div><div class="value" id="changeCount">0</div><div class="sub">皇G欧变化</div></div>
+    <div class="stat-card"><div class="label">赔率时间</div><div class="value" style="font-size:20px;" id="lastUpdate">--</div><div class="sub" id="freshStatus">--</div></div>
+  </div>
+
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab(event, 'matches')">比赛列表</button>
+    <button class="tab-btn" onclick="switchTab(event, 'value')">价值投注</button>
+    <button class="tab-btn" onclick="switchTab(event, 'backtest')">回测中心</button>
+  </div>
+
+  <section class="tab-panel active" id="panel-matches">
+    <div id="matchGroups"><div class="no-data">加载中...</div></div>
+  </section>
+
+  <section class="tab-panel" id="panel-value">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>采集时间</th><th>比赛</th><th>皇G赔率</th><th>北单SP</th><th>当前</th><th>升跌</th><th>选项</th><th>回测赔率</th></tr></thead>
+        <tbody id="valueTableBody"><tr><td colspan="8" class="no-data">加载中...</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="tab-panel" id="panel-backtest">
+    <div class="subtab-nav">
+      <button class="subtab-btn active" onclick="switchSubTab(event, '2x1')">2串1</button>
+      <button class="subtab-btn" onclick="switchSubTab(event, 'single')">单关</button>
+      <button class="subtab-btn" onclick="switchSubTab(event, 'fall')">跌水</button>
+      <button class="subtab-btn" onclick="switchSubTab(event, 'draw')">平局</button>
+    </div>
+    <div class="subtab-panel" id="subtab-2x1">
+      <div class="section-header"><span>2串1 回测</span><span class="profit-badge positive" id="profit-2x1">0元</span></div>
+      <div class="table-wrap"><table><thead><tr><th>投注时间</th><th>比赛1</th><th>选项1</th><th>赔率1</th><th>比赛2</th><th>选项2</th><th>赔率2</th><th>总赔率</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr></thead><tbody id="table-2x1"><tr><td colspan="12" class="no-data">暂无数据</td></tr></tbody></table></div>
+    </div>
+    <div class="subtab-panel" id="subtab-single" style="display:none;">
+      <div class="section-header"><span>单关回测</span><span class="profit-badge positive" id="profit-single">0元</span></div>
+      <div class="table-wrap"><table><thead><tr><th>投注时间</th><th>比赛</th><th>选项</th><th>北单SP</th><th>皇冠</th><th>升跌</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr></thead><tbody id="table-single"><tr><td colspan="10" class="no-data">暂无数据</td></tr></tbody></table></div>
+    </div>
+    <div class="subtab-panel" id="subtab-fall" style="display:none;">
+      <div class="section-header"><span>跌水回测</span><span class="profit-badge positive" id="profit-fall">0元</span></div>
+      <div class="table-wrap"><table><thead><tr><th>投注时间</th><th>比赛</th><th>选项</th><th>北单SP</th><th>皇冠</th><th>升跌</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr></thead><tbody id="table-fall"><tr><td colspan="10" class="no-data">暂无数据</td></tr></tbody></table></div>
+    </div>
+    <div class="subtab-panel" id="subtab-draw" style="display:none;">
+      <div class="section-header"><span>平局回测</span><span class="profit-badge positive" id="profit-draw">0元</span></div>
+      <div class="table-wrap"><table><thead><tr><th>投注时间</th><th>比赛</th><th>选项</th><th>北单SP</th><th>皇冠</th><th>升跌</th><th>投入</th><th>可中</th><th>结果</th><th>操作</th></tr></thead><tbody id="table-draw"><tr><td colspan="10" class="no-data">暂无数据</td></tr></tbody></table></div>
+    </div>
+  </section>
+
+  <div class="changes-panel">
+    <div class="panel-header"><span>赔率变化记录</span><span style="font-size:11px;color:var(--text-muted);">最近 30 条</span></div>
+    <div id="changesList"><div class="no-data">暂无变化</div></div>
+  </div>
+</main>
+
+<script>
+let latestStats = {};
+const openDateGroups = new Set();
+let initializedGroups = false;
+let countdown = 30;
+
+function tick() {
+  const now = new Date();
+  const s = n => String(n).padStart(2, '0');
+  document.getElementById('clock').textContent =
+    now.getFullYear() + '-' + s(now.getMonth()+1) + '-' + s(now.getDate()) + ' ' +
+    s(now.getHours()) + ':' + s(now.getMinutes()) + ':' + s(now.getSeconds());
+}
+tick(); setInterval(tick, 1000);
+
+function todayString() {
+  const now = new Date();
+  const s = n => String(n).padStart(2, '0');
+  return now.getFullYear() + '-' + s(now.getMonth()+1) + '-' + s(now.getDate());
+}
+
+function fo(v) { return v ? Number(v).toFixed(2) : '--'; }
+function pctDiff(sp, crown) { return sp && crown ? ((sp - crown) / crown) * 100 : null; }
+function diffClass(pct) { return pct == null ? 'same' : pct > 0 ? 'up' : pct < 0 ? 'down' : 'same'; }
+function diffText(pct) {
+  if (pct == null) return '--';
+  const abs = Math.abs(pct).toFixed(2);
+  if (pct > 0) return `高 +${abs}%`;
+  if (pct < 0) return `低 -${abs}%`;
+  return '持平';
+}
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fetchData() {
+  Promise.all([
+    fetch('api/beidan/matches').then(r => r.ok ? r.json() : []),
+    fetch('api/beidan/changes').then(r => r.ok ? r.json() : []),
+    fetch('api/beidan/stats').then(r => r.ok ? r.json() : {}),
+    fetch('api/beidan/value-bets').then(r => r.ok ? r.json() : {value_matches: []}),
+    fetch('api/beidan/backtest').then(r => r.ok ? r.json() : []),
+    fetch('api/beidan/single-bet').then(r => r.ok ? r.json() : []),
+    fetch('api/beidan/fall-bet').then(r => r.ok ? r.json() : []),
+    fetch('api/beidan/draw-bet').then(r => r.ok ? r.json() : [])
+  ]).then(([matches, changes, stats, valueBets, backtest, singleBet, fallBet, drawBet]) => {
+    latestStats = stats || {};
+    updateStats(stats);
+    updateMatches(matches);
+    updateValueBets(valueBets);
+    updateBacktest2x1(backtest);
+    renderBacktestTable(singleBet, 'table-single', 'profit-single', 'single-bet');
+    renderBacktestTable(fallBet, 'table-fall', 'profit-fall', 'fall-bet');
+    renderBacktestTable(drawBet, 'table-draw', 'profit-draw', 'draw-bet');
+    updateChanges(changes);
+    document.getElementById('statusLabel').textContent = '运行中';
+  }).catch(() => {
+    document.getElementById('statusLabel').textContent = '加载失败';
+  });
+}
+
+function updateStats(stats) {
+  stats = stats || {};
+  document.getElementById('matchCount').textContent = stats.total_matches || 0;
+  document.getElementById('valueCount').textContent = stats.value_count || 0;
+  document.getElementById('changeCount').textContent = stats.total_changes || 0;
+  document.getElementById('lastUpdate').textContent = stats.latest_odds_time ? stats.latest_odds_time.substring(5, 16) : '--';
+  const age = stats.odds_age_minutes;
+  document.getElementById('freshStatus').textContent = age == null ? '暂无赔率时间' : `${age} 分钟前更新`;
+  document.getElementById('nextLabel').textContent = `下次页面刷新 ${countdown} 秒`;
+}
+
+function updateMatches(matches) {
+  const wrap = document.getElementById('matchGroups');
+  if (!matches || !matches.length) {
+    wrap.innerHTML = '<div class="no-data">暂无北单比赛</div>';
+    return;
+  }
+  if (!initializedGroups) {
+    openDateGroups.add(todayString());
+    initializedGroups = true;
+  }
+  const groups = new Map();
+  matches.forEach(m => {
+    const date = m.real_date || m.date_str || m.match_date || '未定日期';
+    if (!groups.has(date)) groups.set(date, []);
+    groups.get(date).push(m);
+  });
+  wrap.innerHTML = Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([date, items]) => {
+    const open = openDateGroups.has(date);
+    const body = items.map(renderMatchCard).join('');
+    return `<section class="date-section ${open ? '' : 'collapsed'}" data-date="${escapeHtml(date)}">
+      <button class="date-toggle" onclick="toggleDateGroup('${escapeHtml(date)}')">
+        <strong>${escapeHtml(date)}</strong>
+        <span>${items.length} 场 · ${open ? '点击折叠' : '点击展开'}</span>
+      </button>
+      <div class="date-body"><div class="match-grid">${body}</div></div>
+    </section>`;
+  }).join('');
+}
+
+function renderMatchCard(m) {
+  const hh = m.beidan_home && m.home_odds && m.beidan_home > m.home_odds;
+  const hd = m.beidan_draw && m.draw_odds && m.beidan_draw > m.draw_odds;
+  const ha = m.beidan_away && m.away_odds && m.beidan_away > m.away_odds;
+  const homePct = pctDiff(m.beidan_home, m.home_odds);
+  const drawPct = pctDiff(m.beidan_draw, m.draw_odds);
+  const awayPct = pctDiff(m.beidan_away, m.away_odds);
+  const handicap = Number(m.handicap || 0);
+  const handicapText = handicap > 0 ? `+${handicap}` : String(handicap);
+  const staleBadge = m.odds_missing ? '<span class="stale-badge">未匹配皇冠</span>' : (m.odds_stale ? '<span class="stale-badge">旧数据</span>' : '');
+  const updateText = (m.odds_time || '').substring(11, 19) || '--';
+  const ageText = m.odds_age_minutes != null ? ` · ${m.odds_age_minutes}分钟前` : '';
+  return `<article class="match-card">
+    <div class="card-header">
+      <span class="league-tag">${escapeHtml(m.league)}</span>
+      <span class="match-no">#${escapeHtml(m.match_no)} · 让 ${escapeHtml(handicapText)}</span>
+    </div>
+    <div class="teams">
+      <div class="team-name">${escapeHtml(m.home_team)}</div>
+      <div class="vs">VS</div>
+      <div class="team-name">${escapeHtml(m.away_team)}</div>
+    </div>
+    <div class="meta-line"><span>开赛 ${String(m.real_date || '').substring(5)} ${escapeHtml(m.start_time)}</span><span>截止 ${escapeHtml(m.stop_time || '--')}</span></div>
+    <div class="odds-row">
+      <div class="odds-item"><div class="odds-label">皇冠主</div><div class="odds-val">${fo(m.home_odds)}</div></div>
+      <div class="odds-item"><div class="odds-label">皇冠平</div><div class="odds-val">${fo(m.draw_odds)}</div></div>
+      <div class="odds-item"><div class="odds-label">皇冠客</div><div class="odds-val">${fo(m.away_odds)}</div></div>
+    </div>
+    <div class="odds-row">
+      <div class="odds-item"><div class="odds-label">北单主</div><div class="odds-val ${hh?'highlight':''}">${fo(m.beidan_home)}${hh?' ↑':''}</div></div>
+      <div class="odds-item"><div class="odds-label">北单平</div><div class="odds-val ${hd?'highlight':''}">${fo(m.beidan_draw)}${hd?' ↑':''}</div></div>
+      <div class="odds-item"><div class="odds-label">北单客</div><div class="odds-val ${ha?'highlight':''}">${fo(m.beidan_away)}${ha?' ↑':''}</div></div>
+    </div>
+    <div class="odds-diff-row">
+      <div class="odds-diff ${diffClass(homePct)}">主胜差<strong>${diffText(homePct)}</strong></div>
+      <div class="odds-diff ${diffClass(drawPct)}">平局差<strong>${diffText(drawPct)}</strong></div>
+      <div class="odds-diff ${diffClass(awayPct)}">客胜差<strong>${diffText(awayPct)}</strong></div>
+    </div>
+    <div class="card-footer"><span>期号 ${escapeHtml(m.issue_num || '--')}</span><span>更新 ${updateText}${ageText}${staleBadge}</span></div>
+  </article>`;
+}
+
+function toggleDateGroup(date) {
+  if (openDateGroups.has(date)) openDateGroups.delete(date);
+  else openDateGroups.add(date);
+  fetch('api/beidan/matches').then(r => r.json()).then(updateMatches);
+}
+
+function updateValueBets(data) {
+  const tbody = document.getElementById('valueTableBody');
+  const bets = data && data.value_matches ? data.value_matches : [];
+  if (!bets.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="no-data">暂无数据</td></tr>';
+    return;
+  }
+  tbody.innerHTML = bets.slice(0, 80).map(v => {
+    const cp = v.change_pct || '+0.00%';
+    const cls = cp.startsWith('+') && cp !== '+0.00%' ? 'change-up' : cp.startsWith('-') ? 'change-down' : '';
+    const optBadge = v.selected_option === '平局' ? 'badge-draw' : v.selected_option === '主胜' ? 'badge-win' : 'badge-loss';
+    return `<tr>
+      <td>${escapeHtml((v.created_date || '').substring(5))} ${escapeHtml(v.capture_time || '--')}</td>
+      <td style="text-align:left">${escapeHtml((v.match_date || '').substring(5))} ${escapeHtml(v.start_time || '')} <b>${escapeHtml(v.match_no)}</b> <span style="color:var(--accent-cyan)">${escapeHtml(v.league)}</span> ${escapeHtml(v.home_team)} vs ${escapeHtml(v.away_team)}</td>
+      <td>${escapeHtml(v.huangg_odds || '--')}</td>
+      <td>${escapeHtml(v.jingcai_odds || '--')}</td>
+      <td class="odds-highlight">${fo(v.current_odds)}</td>
+      <td class="${cls}">${escapeHtml(cp)}</td>
+      <td><span class="badge ${optBadge}">${escapeHtml(v.selected_option || '--')}</span></td>
+      <td>${fo(v.backtest_odds)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderBacktestTable(data, tbodyId, profitId, apiType) {
+  const tbody = document.getElementById(tbodyId);
+  if (!data || !data.length) {
+    const cols = tbodyId === 'table-2x1' ? 12 : 10;
+    tbody.innerHTML = `<tr><td colspan="${cols}" class="no-data">暂无数据</td></tr>`;
+    document.getElementById(profitId).textContent = '0元';
+    return;
+  }
+  let profit = 0;
+  data.forEach(x => {
+    if (x.result === 1) profit += (x.potential_win || 0) - (x.bet_amount || 100);
+    else if (x.result === 0) profit -= (x.bet_amount || 100);
+  });
+  const p = document.getElementById(profitId);
+  p.textContent = (profit >= 0 ? '+' : '') + profit.toFixed(0) + '元';
+  p.className = 'profit-badge ' + (profit >= 0 ? 'positive' : 'negative');
+
+  if (tbodyId === 'table-2x1') {
+    tbody.innerHTML = data.map(b => {
+      const m1 = `${(b.match1.match_date || '').substring(5)} ${b.match1.start_time || ''} ${b.match1.no} ${b.match1.home} vs ${b.match1.away}`;
+      const m2 = `${(b.match2.match_date || '').substring(5)} ${b.match2.start_time || ''} ${b.match2.no} ${b.match2.home} vs ${b.match2.away}`;
+      return `<tr>
+        <td>${escapeHtml((b.created_at || '').substring(5, 16))}</td>
+        <td style="text-align:left">${escapeHtml(m1)}</td><td>${escapeHtml(b.match1.option)}</td><td class="odds-highlight">${fo(b.match1.odds)}</td>
+        <td style="text-align:left">${escapeHtml(m2)}</td><td>${escapeHtml(b.match2.option)}</td><td class="odds-highlight">${fo(b.match2.odds)}</td>
+        <td>${fo(b.total_odds)}</td><td>${fo(b.bet_amount)}</td><td>${fo(b.potential_win)}</td>
+        <td>${resultLabel(b.result)}</td><td>${actionButtons('backtest', b.id)}</td>
+      </tr>`;
+    }).join('');
+    return;
+  }
+
+  tbody.innerHTML = data.map(item => {
+    const match = `${(item.match_date || '').substring(5)} ${item.start_time || ''} ${item.match_no} ${item.home_team} vs ${item.away_team}`;
+    return `<tr>
+      <td>${escapeHtml((item.created_at || '').substring(5, 16))}</td>
+      <td style="text-align:left">${escapeHtml(match)}</td>
+      <td>${escapeHtml(item.option_type || '')}</td>
+      <td class="odds-highlight">${fo(item.odds)}</td>
+      <td>${fo(item.huangg)}</td>
+      <td class="${(item.change_pct || 0) >= 0 ? 'change-up' : 'change-down'}">${Number(item.change_pct || 0).toFixed(2)}%</td>
+      <td>${fo(item.bet_amount)}</td><td>${fo(item.potential_win)}</td>
+      <td>${resultLabel(item.result)}</td><td>${actionButtons(apiType, item.id)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateBacktest2x1(data) { renderBacktestTable(data, 'table-2x1', 'profit-2x1', 'backtest'); }
+function resultLabel(result) {
+  if (result === 1) return '<span class="badge badge-win">命中</span>';
+  if (result === 0) return '<span class="badge badge-loss">未中</span>';
+  return '<span class="badge">待定</span>';
+}
+function actionButtons(type, id) {
+  return `<button class="action-btn" onclick="setResult('${type}', ${id}, 1)">中</button><button class="action-btn" onclick="setResult('${type}', ${id}, 0)">错</button><button class="action-btn danger" onclick="deleteItem('${type}', ${id})">删</button>`;
+}
+
+function updateChanges(changes) {
+  const list = document.getElementById('changesList');
+  if (!changes || !changes.length) {
+    list.innerHTML = '<div class="no-data">暂无变化记录</div>';
+    return;
+  }
+  list.innerHTML = changes.slice(0, 30).map(c => {
+    const isUp = c.to > c.from;
+    return `<div class="change-item">
+      <span class="ci-time">${escapeHtml((c.time || '').substring(11, 19))}</span>
+      <div class="ci-match"><span class="ci-league">${escapeHtml(c.league)}</span>${escapeHtml(c.home)} vs ${escapeHtml(c.away)}</div>
+      <span>${escapeHtml((c.change_type || '').replace('变化', ''))}</span>
+      <span>${fo(c.from)}</span><span class="${isUp ? 'change-up' : 'change-down'}">${isUp ? '上升' : '下降'}</span><span>${fo(c.to)}</span>
+    </div>`;
+  }).join('');
+}
+
+function switchTab(e, name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  e.currentTarget.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+function switchSubTab(e, name) {
+  document.querySelectorAll('.subtab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.subtab-panel').forEach(p => p.style.display = 'none');
+  e.currentTarget.classList.add('active');
+  document.getElementById('subtab-' + name).style.display = 'block';
+}
+function verifyPassword() {
+  const pwd = prompt('请输入密码：');
+  return pwd || false;
+}
+function setResult(type, id, result) {
+  const pwd = verifyPassword();
+  if (!pwd) return;
+  fetch(`api/beidan/${type}/${id}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `result=${result}&password=${encodeURIComponent(pwd)}`
+  }).then(r => r.json()).then(data => {
+    if (data.success) fetchData();
+    else if (data.error) alert(data.error);
+  });
+}
+function deleteItem(type, id) {
+  const pwd = verifyPassword();
+  if (!pwd || !confirm('确定删除这条记录？')) return;
+  fetch(`api/beidan/${type}/${id}?password=${encodeURIComponent(pwd)}`, { method: 'DELETE' })
+    .then(r => r.json()).then(data => { if (data.success) fetchData(); else if (data.error) alert(data.error); });
+}
+function triggerCollect() {
+  document.getElementById('statusLabel').textContent = '采集中...';
+  fetch('api/beidan/collect', { method: 'POST' }).then(r => r.json()).then(d => {
+    document.getElementById('statusLabel').textContent = d.success ? '采集完成' : '采集失败';
+    fetchData();
+  });
+}
+
+setInterval(() => {
+  countdown--;
+  if (countdown <= 0) countdown = 30;
+  document.getElementById('nextLabel').textContent = `下次页面刷新 ${countdown} 秒`;
+}, 1000);
+
+fetchData();
+setInterval(fetchData, 30000);
+</script>
+</body>
+</html>

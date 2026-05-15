@@ -1,5 +1,6 @@
 """赔率数据采集器 — 支持多数据源"""
 import datetime
+import concurrent.futures
 import difflib
 import json
 import os
@@ -14,7 +15,7 @@ from time_utils import BEIJING_TZ, fromtimestamp_bj, now_bj, today_bj
 from config import (
     API_TIMEOUT, MAX_RETRIES, RETRY_BACKOFF,
     DATA_SOURCE_STATE_FILE, DEFAULT_DATA_SOURCE,
-    SPORTTERY_API_BASE, OKOOO_JINGCAI_URL, HUANGGUAN_URL,
+    SPORTTERY_API_BASE, OKOOO_JINGCAI_URL,
     ODDS_API_IO_BASE, ODDS_API_IO_KEY, ODDS_API_IO_KEY_FILE,
     ODDS_API_IO_BOOKMAKERS, ODDS_API_IO_EVENT_LIMIT, ODDS_API_IO_CACHE_TTL,
     ODDS_API_IO_BATCH_SIZE, ODDS_API_IO_FREE_REQUESTS_PER_HOUR,
@@ -24,7 +25,7 @@ from config import (
 )
 
 # 数据源配置
-DATA_SOURCE = DEFAULT_DATA_SOURCE  # 可选: "odds_api_io", "okooo", "20002028", "mock"
+DATA_SOURCE = DEFAULT_DATA_SOURCE  # 可选: "nowscore_crown", "odds_api_io", "okooo", "20002028", "mock"
 REAL_API_BASE = "https://www.20002028.xyz/jingcai/api"
 
 SOURCE_OPTIONS = {
@@ -38,9 +39,9 @@ SOURCE_OPTIONS = {
         "description": "澳客竞彩赛程 + Odds-API.io 欧赔",
         "requires_key": True,
     },
-    "huangguan": {
-        "name": "皇冠+竞彩",
-        "description": "皇冠即时欧赔 + 竞彩对照",
+    "nowscore_crown": {
+        "name": "捷报皇冠+竞彩",
+        "description": "捷报竞彩赛程 + nowscore Crown 欧赔",
         "requires_key": False,
     },
     "okooo": {
@@ -56,11 +57,14 @@ SOURCE_OPTIONS = {
 }
 
 _odds_api_io_cache = {"expires_at": 0, "matches": None}
-_huangguan_cache = {"expires_at": 0, "matches": None}
+_nowscore_crown_cache = {"expires_at": 0, "matches": None}
 CHINA_TZ = BEIJING_TZ
 OKOOO_HISTORY_DAYS = int(os.environ.get("OKOOO_HISTORY_DAYS", "1"))
 OKOOO_FUTURE_DAYS = int(os.environ.get("OKOOO_FUTURE_DAYS", "2"))
-HUANGGUAN_CACHE_TTL = int(os.environ.get("HUANGGUAN_CACHE_TTL", "60"))
+NOWSCORE_CROWN_CACHE_TTL = int(os.environ.get("NOWSCORE_CROWN_CACHE_TTL", "60"))
+NOWSCORE_CP_URL = os.environ.get("NOWSCORE_CP_URL", "https://cp.nowscore.com/").strip()
+NOWSCORE_1X2_BASE = os.environ.get("NOWSCORE_1X2_BASE", "https://1x2.nowscore.com").rstrip("/")
+NOWSCORE_CROWN_WORKERS = max(1, int(os.environ.get("NOWSCORE_CROWN_WORKERS", "6")))
 
 
 class OddsApiBudgetError(Exception):
@@ -100,12 +104,13 @@ def _http_error_message(service, url, error):
 
 
 def _load_data_source():
+    default_source = DEFAULT_DATA_SOURCE if DEFAULT_DATA_SOURCE in SOURCE_OPTIONS else "nowscore_crown"
     try:
         with open(DATA_SOURCE_STATE_FILE, encoding="utf-8") as f:
             source = json.load(f).get("source")
-        return source if source in SOURCE_OPTIONS else DEFAULT_DATA_SOURCE
+        return source if source in SOURCE_OPTIONS else default_source
     except (OSError, ValueError, TypeError):
-        return DEFAULT_DATA_SOURCE
+        return default_source
 
 
 def get_data_source():
@@ -1237,17 +1242,16 @@ def fetch_from_okooo():
     ]
 
 
-def _huangguan_request(url=None):
+def _nowscore_request(url, service="捷报比分"):
     import ssl
 
-    url = (url or HUANGGUAN_URL).rstrip("/") + "/"
     req = urllib.request.Request(
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml,application/javascript;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Referer": "https://www.zuqiudi.com/",
+            "Referer": "https://cp.nowscore.com/",
         },
     )
     ctx = ssl.create_default_context()
@@ -1263,156 +1267,157 @@ def _huangguan_request(url=None):
                 continue
         return raw.decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
-        raise ExternalApiError(_http_error_message("皇冠指数", url, e)) from e
+        raise ExternalApiError(_http_error_message(service, url, e)) from e
     except Exception as e:
-        raise ExternalApiError(f"皇冠指数请求失败: {_redact_url(url)} | {e}") from e
+        raise ExternalApiError(f"{service}请求失败: {_redact_url(url)} | {e}") from e
 
 
-def _normalize_match_text(value):
-    return re.sub(r"[^\w\u4e00-\u9fff]+", "", str(value or "").strip().lower())
+def _nowscore_abs_url(value):
+    value = str(value or "")
+    if value.startswith("//"):
+        return f"https:{value}"
+    if value.startswith("/"):
+        return f"https://cp.nowscore.com{value}"
+    return value
 
 
-def _match_text_score(left, right, aliases=None):
-    left_norm = _normalize_match_text(left)
-    right_norm = _normalize_match_text(right)
-    if not left_norm or not right_norm:
-        return 0
-
-    candidates = [left_norm]
-    if aliases:
-        for alias in aliases.get(left, []) + aliases.get(str(left).lower(), []):
-            alias_norm = _normalize_match_text(alias)
-            if alias_norm and alias_norm not in candidates:
-                candidates.append(alias_norm)
-
-    best = 0
-    for candidate in candidates:
-        if candidate == right_norm or candidate in right_norm or right_norm in candidate:
-            return 100
-        best = max(best, int(difflib.SequenceMatcher(None, candidate, right_norm).ratio() * 100))
-    return best
+def _nowscore_text(node):
+    return node.get_text(" ", strip=True) if node else ""
 
 
-def _parse_huangguan_date(text):
-    match = re.search(r"(\d{4}-\d{2}-\d{2})", str(text or ""))
-    return match.group(1) if match else ""
+def _parse_nowscore_match_datetime(row):
+    for td in row.find_all("td"):
+        title = td.get("title") or ""
+        found = re.search(r"开赛时间：(\d{4}-\d{1,2}-\d{1,2})\s+(\d{1,2}:\d{2})", title)
+        if found:
+            date_part = found.group(1)
+            try:
+                dt = datetime.datetime.strptime(f"{date_part} {found.group(2)}", "%Y-%m-%d %H:%M")
+                return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")
+            except ValueError:
+                return date_part, found.group(2)
+    return "", ""
 
 
-def _parse_huangguan_html(html):
+def _parse_nowscore_cp_html(html):
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
-    rows = []
-    current_date = ""
-    for tr in soup.select("div#Main tr"):
-        tds = tr.find_all("td")
-        if len(tds) == 1 and tds[0].get("colspan") == "15":
-            current_date = _parse_huangguan_date(tds[0].get_text(" ", strip=True))
-            continue
-        if len(tds) != 15 or tr.get("class") not in (["tr1"], ["tr2"]):
+    matches = []
+    for row in soup.select('tr[id^="row_"][matchid]'):
+        lottery_id = str(row.get("matchid") or "").strip()
+        if not lottery_id:
             continue
 
-        start_time = tds[0].get_text(" ", strip=True)
-        league = tds[1].get_text(" ", strip=True)
-        home = tds[2].get_text(" ", strip=True)
-        away = tds[3].get_text(" ", strip=True)
-        home_odds = _to_decimal(tds[4].get_text(" ", strip=True))
-        draw_odds = _to_decimal(tds[5].get_text(" ", strip=True))
-        away_odds = _to_decimal(tds[6].get_text(" ", strip=True))
-        if not (current_date and start_time and league and home and away and home_odds and draw_odds and away_odds):
+        home_el = row.select_one('a[id^="HomeTeam_"]')
+        away_el = row.select_one('a[id^="GuestTeam_"]')
+        if not (home_el and away_el):
             continue
 
-        source_id = ""
-        first_odds_id = tds[4].get("id") or ""
-        if first_odds_id:
-            source_id = first_odds_id.split("_")[1] if "_" in first_odds_id else first_odds_id
+        odds_link = row.select_one('a[href*="/1x2/"]')
+        odds_href = odds_link.get("href") if odds_link else ""
+        match_id_match = re.search(r"/1x2/(\d+)\.htm", odds_href or "")
+        if not match_id_match:
+            match_id_match = re.search(r"_(\d+)$", home_el.get("id") or "")
+        nowscore_match_id = match_id_match.group(1) if match_id_match else ""
+        if not nowscore_match_id:
+            continue
 
-        rows.append({
-            "source_id": source_id,
-            "match_date": current_date,
-            "start_time": start_time[:5],
-            "league": league,
-            "home_team": home,
-            "away_team": away,
-            "home_odds": home_odds,
-            "draw_odds": draw_odds,
-            "away_odds": away_odds,
-        })
-    return rows
+        first_td = row.find("td")
+        match_no = re.sub(r"\D+", "", _nowscore_text(first_td))[-3:]
+        league = row.get("gamename") or _nowscore_text(row.find_all("td")[1] if len(row.find_all("td")) > 1 else None)
+        match_date, start_time = _parse_nowscore_match_datetime(row)
+
+        had = {
+            "home": _to_decimal(_nowscore_text(soup.find(id=f"sp_{lottery_id}_52"))),
+            "draw": _to_decimal(_nowscore_text(soup.find(id=f"sp_{lottery_id}_53"))),
+            "away": _to_decimal(_nowscore_text(soup.find(id=f"sp_{lottery_id}_54"))),
+        }
+        if not (match_no and league and match_date and start_time and all(had.values())):
+            continue
+
+        raw = {
+            "matchNumStr": match_no,
+            "matchNum": match_no,
+            "leagueAbbName": league,
+            "leagueAllName": league,
+            "homeTeamAbbName": _nowscore_text(home_el),
+            "homeTeamAllName": _nowscore_text(home_el),
+            "awayTeamAbbName": _nowscore_text(away_el),
+            "awayTeamAllName": _nowscore_text(away_el),
+            "matchDate": match_date,
+            "matchTime": start_time,
+            "oddsList": [{
+                "poolCode": "HAD",
+                "h": had["home"],
+                "d": had["draw"],
+                "a": had["away"],
+            }],
+            "nowscoreMatchId": nowscore_match_id,
+            "nowscoreLotteryId": lottery_id,
+            "nowscoreOddsUrl": _nowscore_abs_url(odds_href),
+        }
+        matches.append({"raw": raw, "had": had})
+    return matches or None
 
 
-def _fetch_jingcai_matches_for_huangguan():
-    for label, fetcher in [
-        ("澳客", fetch_from_okooo_jingcai),
-        ("主接口", fetch_from_20002028_jingcai),
-        ("体彩", fetch_from_sporttery_jingcai),
-    ]:
-        try:
-            matches = fetcher()
-        except ExternalApiError as e:
-            print(f"  {label}竞彩接口不可用: {e}")
-            matches = None
-        if matches:
-            return matches, label
-    return None, None
+def _parse_nowscore_js_datetime(value):
+    parts = str(value or "").split(",")
+    if len(parts) < 6:
+        return ""
+    try:
+        year = int(parts[0])
+        month_expr = parts[1].strip()
+        if "-" in month_expr:
+            month_index = sum(int(part) if idx == 0 else -int(part) for idx, part in enumerate(month_expr.split("-")))
+        else:
+            month_index = int(month_expr)
+        dt_utc = datetime.datetime(
+            year,
+            month_index + 1,
+            int(parts[2]),
+            int(parts[3]),
+            int(parts[4]),
+            int(parts[5]),
+            tzinfo=datetime.UTC,
+        )
+        return dt_utc.astimezone(CHINA_TZ).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return ""
 
 
-def _match_huangguan_row(jc_match, huangguan_rows):
-    jc_dt = _parse_sporttery_dt(jc_match)
-    if not jc_dt:
+def _parse_nowscore_crown_js(js_text):
+    array_match = re.search(r"var\s+game\s*=\s*Array\((.*?)\);\s*var\s+", js_text, re.S)
+    if not array_match:
+        array_match = re.search(r"var\s+game\s*=\s*Array\((.*?)\);\s*$", js_text, re.S)
+    if not array_match:
         return None
 
-    best = (0, None)
-    for row in huangguan_rows:
-        try:
-            row_dt = datetime.datetime.strptime(
-                f"{row.get('match_date', '')} {row.get('start_time', '')}",
-                "%Y-%m-%d %H:%M",
-            )
-        except (TypeError, ValueError):
+    rows = re.findall(r'"((?:[^"\\]|\\.)*)"', array_match.group(1))
+    for raw_row in rows:
+        fields = raw_row.split("|")
+        if len(fields) < 21:
             continue
-
-        diff_minutes = abs((row_dt - jc_dt).total_seconds()) / 60
-        if diff_minutes > 120:
+        company_name = fields[2].strip()
+        short_name = fields[21].strip() if len(fields) > 21 else ""
+        if fields[0] != "545" and company_name.lower() != "crown" and not short_name.lower().startswith("crow"):
             continue
+        odds = {
+            "home": _to_decimal(fields[10]),
+            "draw": _to_decimal(fields[11]),
+            "away": _to_decimal(fields[12]),
+            "odds_time": _parse_nowscore_js_datetime(fields[20]),
+            "source_company": company_name or short_name,
+            "source_company_id": fields[0],
+        }
+        if odds["home"] and odds["draw"] and odds["away"]:
+            return odds
+    return None
 
-        league_score = _match_text_score(
-            jc_match.get("leagueAbbName") or jc_match.get("leagueAllName"),
-            row.get("league"),
-            LEAGUE_ALIASES,
-        )
-        home_score = _match_text_score(
-            jc_match.get("homeTeamAllName") or jc_match.get("homeTeamAbbName"),
-            row.get("home_team"),
-            TEAM_ALIASES,
-        )
-        away_score = _match_text_score(
-            jc_match.get("awayTeamAllName") or jc_match.get("awayTeamAbbName"),
-            row.get("away_team"),
-            TEAM_ALIASES,
-        )
-        reverse_home_score = _match_text_score(
-            jc_match.get("homeTeamAllName") or jc_match.get("homeTeamAbbName"),
-            row.get("away_team"),
-            TEAM_ALIASES,
-        )
-        reverse_away_score = _match_text_score(
-            jc_match.get("awayTeamAllName") or jc_match.get("awayTeamAbbName"),
-            row.get("home_team"),
-            TEAM_ALIASES,
-        )
-        if reverse_home_score + reverse_away_score > home_score + away_score:
-            home_score, away_score = 0, 0
 
-        if home_score < 60 or away_score < 60:
-            continue
-
-        time_score = max(0, 30 - int(diff_minutes))
-        score = league_score + home_score + away_score + time_score
-        if score > best[0]:
-            best = (score, row)
-
-    return best[1] if best[0] >= 180 else None
+def _fetch_nowscore_crown_odds(match_id):
+    url = f"{NOWSCORE_1X2_BASE}/{match_id}.js"
+    return _parse_nowscore_crown_js(_nowscore_request(url, service="捷报Crown欧赔"))
 
 
 def _jingcai_match_key(jc_match):
@@ -1423,98 +1428,66 @@ def _jingcai_match_key(jc_match):
     )
 
 
-def _match_row_key(row):
-    return (
-        str(row.get("match_date") or "")[:10],
-        str(row.get("match_no") or "")[-3:],
-        str(row.get("start_time") or "")[:5],
-    )
-
-
-def _row_primary_odds(row):
-    home = row.get("home_odds")
-    draw = row.get("draw_odds")
-    away = row.get("away_odds")
-    if home and draw and away:
-        return {
-            "home": home,
-            "draw": draw,
-            "away": away,
-        }
-    return None
-
-
-def fetch_from_zuqiudi_huangguan():
-    """从足球帝皇冠页提取即时欧赔，并与竞彩赛程合并。"""
+def fetch_from_nowscore_crown():
+    """从捷报竞彩页提取赛程/竞彩 SP，再取 nowscore Crown 即时欧赔合并。"""
     now_ts = time.time()
-    if _huangguan_cache["matches"] is not None and now_ts < _huangguan_cache["expires_at"]:
-        return _huangguan_cache["matches"]
-
-    jingcai_matches, jingcai_source_label = _fetch_jingcai_matches_for_huangguan()
-    if not jingcai_matches:
-        return None
+    if _nowscore_crown_cache["matches"] is not None and now_ts < _nowscore_crown_cache["expires_at"]:
+        return _nowscore_crown_cache["matches"]
 
     try:
-        huangguan_rows = _parse_huangguan_html(_huangguan_request())
+        jingcai_matches = _parse_nowscore_cp_html(_nowscore_request(NOWSCORE_CP_URL, service="捷报竞彩"))
     except ExternalApiError as e:
-        print(f"  皇冠指数接口不可用，继续返回竞彩列表: {e}")
-        huangguan_rows = []
+        print(f"  捷报竞彩接口不可用: {e}")
+        return None
+
+    if not jingcai_matches:
+        print("  捷报竞彩未返回可用胜平负比赛")
+        return None
+
+    crown_map = {}
+    crown_errors = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NOWSCORE_CROWN_WORKERS) as executor:
+        future_map = {
+            executor.submit(_fetch_nowscore_crown_odds, jc["raw"].get("nowscoreMatchId")): jc
+            for jc in jingcai_matches
+            if jc["raw"].get("nowscoreMatchId")
+        }
+        for future in concurrent.futures.as_completed(future_map):
+            jc = future_map[future]
+            match_id = jc["raw"].get("nowscoreMatchId")
+            try:
+                primary = future.result()
+            except ExternalApiError as e:
+                crown_errors.append(f"{match_id}: {e}")
+                primary = None
+            except Exception as e:
+                crown_errors.append(f"{match_id}: {e}")
+                primary = None
+            if primary:
+                crown_map[_jingcai_match_key(jc["raw"])] = primary
 
     matches = []
-    crown_matched_count = 0
-    supplement_map = {}
-    supplement_count = 0
-
-    unmatched_jingcai = []
-    for jc in jingcai_matches:
-        huangguan_row = _match_huangguan_row(jc["raw"], huangguan_rows) if huangguan_rows else None
-        key = _jingcai_match_key(jc["raw"])
-        primary = None
-        if huangguan_row:
-            primary = {
-                "home": huangguan_row["home_odds"],
-                "draw": huangguan_row["draw_odds"],
-                "away": huangguan_row["away_odds"],
-            }
-            crown_matched_count += 1
-        else:
-            unmatched_jingcai.append((key, jc))
-        supplement_map[key] = primary
-
-    if unmatched_jingcai:
-        odds_rows = fetch_from_odds_api_io() or []
-        odds_map = {}
-        for row in odds_rows:
-            primary = _row_primary_odds(row)
-            if primary:
-                odds_map[_match_row_key(row)] = primary
-        for key, jc in unmatched_jingcai:
-            if supplement_map.get(key):
-                continue
-            odds_primary = odds_map.get(key)
-            if odds_primary:
-                supplement_map[key] = odds_primary
-                supplement_count += 1
-
     for jc in jingcai_matches:
         key = _jingcai_match_key(jc["raw"])
         matches.append(
             _sporttery_row(
                 jc["raw"],
                 jc["had"],
-                primary=supplement_map.get(key),
+                primary=crown_map.get(key),
                 clear_stale_odds=True,
                 force_clear_odds=True,
                 preserve_missing=True,
             )
         )
 
+    crown_matched_count = len(crown_map)
+    error_text = f", 错误 {len(crown_errors)} 场" if crown_errors else ""
     print(
-        f"  皇冠采集: {jingcai_source_label} {len(jingcai_matches)} 场, "
-        f"皇冠匹配 {crown_matched_count} 场, Odds补充 {supplement_count} 场"
+        f"  捷报皇冠采集: 竞彩 {len(jingcai_matches)} 场, "
+        f"Crown匹配 {crown_matched_count} 场{error_text}"
     )
-    _huangguan_cache["matches"] = matches
-    _huangguan_cache["expires_at"] = now_ts + HUANGGUAN_CACHE_TTL
+    _nowscore_crown_cache["matches"] = matches
+    _nowscore_crown_cache["expires_at"] = now_ts + NOWSCORE_CROWN_CACHE_TTL
     return matches
 
 
@@ -1596,7 +1569,7 @@ def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False, force_cl
             "home_odds": primary["home"],
             "draw_odds": primary["draw"],
             "away_odds": primary["away"],
-            "odds_time": now_str,
+            "odds_time": primary.get("odds_time") or now_str,
         })
     return row
 
@@ -1882,10 +1855,10 @@ def collect_data():
             print("⚠️ 主接口 fallback 也不可用，跳过本轮采集")
             return False
         return ok
-    elif source == "huangguan":
-        ok = collect_real_data(fetch_from_zuqiudi_huangguan)
+    elif source == "nowscore_crown":
+        ok = collect_real_data(fetch_from_nowscore_crown)
         if not ok:
-            print("⚠️ 皇冠数据源不可用，跳过本轮采集（不 fallback 模拟数据）")
+            print("⚠️ 捷报皇冠数据源不可用，跳过本轮采集（不 fallback 模拟数据）")
             return False
         return ok
     elif source == "mock":
