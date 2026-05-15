@@ -187,11 +187,60 @@ def beidan_upcoming_matches_query(db: Session):
     )
 
 
+def beidan_all_matches_query(db: Session):
+    init_db()
+    return sorted(
+        db.query(BeidanMatch).all(),
+        key=lambda m: (
+            (m.match_date or ""),
+            (m.start_time or ""),
+            _safe_int(m.match_no),
+            m.id or 0,
+        ),
+    )
+
+
 def _safe_int(value, default=0):
     try:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def format_beidan_match(m, now=None):
+    now = now or now_bj()
+    parsed_odds_dt = odds_dt(m)
+    return {
+        "id": m.id,
+        "issue_num": m.issue_num,
+        "match_no": m.match_no,
+        "league": m.league,
+        "real_date": m.match_date,
+        "start_time": m.start_time,
+        "stop_time": m.stop_time,
+        "handicap": m.handicap,
+        "home_team": m.home_team,
+        "away_team": m.away_team,
+        "status": m.status,
+        "date_str": m.match_date,
+        "home_odds": m.home_odds,
+        "draw_odds": m.draw_odds,
+        "away_odds": m.away_odds,
+        "beidan_home": m.beidan_home,
+        "beidan_draw": m.beidan_draw,
+        "beidan_away": m.beidan_away,
+        "odds_time": m.odds_time,
+        "odds_missing": not (m.home_odds and m.draw_odds and m.away_odds),
+        "odds_age_minutes": (
+            int((now - parsed_odds_dt).total_seconds() // 60)
+            if parsed_odds_dt
+            else None
+        ),
+        "odds_stale": (
+            parsed_odds_dt is None
+            or int((now - parsed_odds_dt).total_seconds() // 60) > 20
+        ),
+    }
 
 
 # ==================== API 端点 ====================
@@ -545,42 +594,20 @@ def api_beidan_matches(db: Session = Depends(get_db)):
     try:
         upcoming = beidan_upcoming_matches_query(db)
         now = now_bj()
-        return [
-            {
-                "id": m.id,
-                "issue_num": m.issue_num,
-                "match_no": m.match_no,
-                "league": m.league,
-                "real_date": m.match_date,
-                "start_time": m.start_time,
-                "stop_time": m.stop_time,
-                "handicap": m.handicap,
-                "home_team": m.home_team,
-                "away_team": m.away_team,
-                "status": m.status,
-                "date_str": m.match_date,
-                "home_odds": m.home_odds,
-                "draw_odds": m.draw_odds,
-                "away_odds": m.away_odds,
-                "beidan_home": m.beidan_home,
-                "beidan_draw": m.beidan_draw,
-                "beidan_away": m.beidan_away,
-                "odds_time": m.odds_time,
-                "odds_missing": not (m.home_odds and m.draw_odds and m.away_odds),
-                "odds_age_minutes": (
-                    int((now - odds_dt(m)).total_seconds() // 60)
-                    if odds_dt(m)
-                    else None
-                ),
-                "odds_stale": (
-                    odds_dt(m) is None
-                    or int((now - odds_dt(m)).total_seconds() // 60) > 20
-                ),
-            }
-            for m in upcoming
-        ]
+        return [format_beidan_match(m, now) for m in upcoming]
     except Exception as e:
         print(f"北单比赛接口错误: {e}")
+        return []
+
+
+@app.get("/api/beidan/matches-all")
+def api_beidan_matches_all(db: Session = Depends(get_db)):
+    try:
+        matches = beidan_all_matches_query(db)
+        now = now_bj()
+        return [format_beidan_match(m, now) for m in matches]
+    except Exception as e:
+        print(f"北单全量比赛接口错误: {e}")
         return []
 
 

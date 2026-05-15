@@ -306,10 +306,18 @@ function fetchJson(path, fallback) {
     .finally(() => clearTimeout(timer));
 }
 
+async function loadBeidanMatches(stats) {
+  let matches = await fetchJson('/api/beidan/matches', []);
+  if ((!matches || !matches.length) && stats && Number(stats.total_matches || 0) > 0) {
+    lastFetchHadError = true;
+    matches = await fetchJson('/api/beidan/matches-all', []);
+  }
+  return matches || [];
+}
+
 async function fetchData() {
   lastFetchHadError = false;
   Promise.all([
-    fetchJson('/api/beidan/matches', []),
     fetchJson('/api/beidan/changes', []),
     fetchJson('/api/beidan/stats', {}),
     fetchJson('/api/beidan/value-bets', {value_matches: []}),
@@ -317,7 +325,8 @@ async function fetchData() {
     fetchJson('/api/beidan/single-bet', []),
     fetchJson('/api/beidan/fall-bet', []),
     fetchJson('/api/beidan/draw-bet', [])
-  ]).then(([matches, changes, stats, valueBets, backtest, singleBet, fallBet, drawBet]) => {
+  ]).then(async ([changes, stats, valueBets, backtest, singleBet, fallBet, drawBet]) => {
+    const matches = await loadBeidanMatches(stats);
     latestStats = stats || {};
     updateStats(stats);
     updateMatches(matches);
@@ -348,7 +357,10 @@ function updateStats(stats) {
 function updateMatches(matches) {
   const wrap = document.getElementById('matchGroups');
   if (!matches || !matches.length) {
-    wrap.innerHTML = '<div class="no-data">暂无北单比赛</div>';
+    const count = Number((latestStats && latestStats.total_matches) || 0);
+    wrap.innerHTML = count > 0
+      ? '<div class="no-data">北单比赛列表暂时未返回，请点右上角手动采集或稍后刷新</div>'
+      : '<div class="no-data">暂无北单比赛</div>';
     return;
   }
   if (!initializedGroups) {
@@ -419,7 +431,7 @@ function renderMatchCard(m) {
 function toggleDateGroup(date) {
   if (openDateGroups.has(date)) openDateGroups.delete(date);
   else openDateGroups.add(date);
-  fetchJson('/api/beidan/matches', []).then(updateMatches);
+  loadBeidanMatches(latestStats).then(updateMatches);
 }
 
 function updateValueBets(data) {
