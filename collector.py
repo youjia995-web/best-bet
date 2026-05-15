@@ -56,9 +56,11 @@ SOURCE_OPTIONS = {
 }
 
 _odds_api_io_cache = {"expires_at": 0, "matches": None}
+_huangguan_cache = {"expires_at": 0, "matches": None}
 CHINA_TZ = BEIJING_TZ
 OKOOO_HISTORY_DAYS = int(os.environ.get("OKOOO_HISTORY_DAYS", "1"))
 OKOOO_FUTURE_DAYS = int(os.environ.get("OKOOO_FUTURE_DAYS", "2"))
+HUANGGUAN_CACHE_TTL = int(os.environ.get("HUANGGUAN_CACHE_TTL", "60"))
 
 
 class OddsApiBudgetError(Exception):
@@ -1444,6 +1446,10 @@ def _row_primary_odds(row):
 
 def fetch_from_zuqiudi_huangguan():
     """从足球帝皇冠页提取即时欧赔，并与竞彩赛程合并。"""
+    now_ts = time.time()
+    if _huangguan_cache["matches"] is not None and now_ts < _huangguan_cache["expires_at"]:
+        return _huangguan_cache["matches"]
+
     jingcai_matches, jingcai_source_label = _fetch_jingcai_matches_for_huangguan()
     if not jingcai_matches:
         return None
@@ -1507,6 +1513,8 @@ def fetch_from_zuqiudi_huangguan():
         f"  皇冠采集: {jingcai_source_label} {len(jingcai_matches)} 场, "
         f"皇冠匹配 {crown_matched_count} 场, Odds补充 {supplement_count} 场"
     )
+    _huangguan_cache["matches"] = matches
+    _huangguan_cache["expires_at"] = now_ts + HUANGGUAN_CACHE_TTL
     return matches
 
 
