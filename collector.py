@@ -14,7 +14,7 @@ from time_utils import BEIJING_TZ, fromtimestamp_bj, now_bj, today_bj
 from config import (
     API_TIMEOUT, MAX_RETRIES, RETRY_BACKOFF,
     DATA_SOURCE_STATE_FILE, DEFAULT_DATA_SOURCE,
-    SPORTTERY_API_BASE, OKOOO_JINGCAI_URL,
+    SPORTTERY_API_BASE, OKOOO_JINGCAI_URL, HUANGGUAN_URL,
     ODDS_API_IO_BASE, ODDS_API_IO_KEY, ODDS_API_IO_KEY_FILE,
     ODDS_API_IO_BOOKMAKERS, ODDS_API_IO_EVENT_LIMIT, ODDS_API_IO_CACHE_TTL,
     ODDS_API_IO_BATCH_SIZE, ODDS_API_IO_FREE_REQUESTS_PER_HOUR,
@@ -37,6 +37,11 @@ SOURCE_OPTIONS = {
         "name": "澳客+欧赔",
         "description": "澳客竞彩赛程 + Odds-API.io 欧赔",
         "requires_key": True,
+    },
+    "huangguan": {
+        "name": "皇冠+竞彩",
+        "description": "皇冠即时欧赔 + 竞彩对照",
+        "requires_key": False,
     },
     "okooo": {
         "name": "澳客竞彩",
@@ -257,11 +262,14 @@ def collect_real_data(fetcher=fetch_from_20002028):
                 clear_stale_odds = bool(m.get("clear_stale_odds"))
                 should_clear_odds = False
                 if clear_stale_odds and not (home_odds and draw_odds and away_odds):
-                    try:
-                        old_ot = datetime.datetime.strptime((match.odds_time or "")[:19], "%Y-%m-%d %H:%M:%S")
-                        should_clear_odds = (now - old_ot).total_seconds() > ODDS_API_IO_ODDS_STALE_AFTER
-                    except (TypeError, ValueError):
+                    if m.get("force_clear_odds"):
                         should_clear_odds = True
+                    else:
+                        try:
+                            old_ot = datetime.datetime.strptime((match.odds_time or "")[:19], "%Y-%m-%d %H:%M:%S")
+                            should_clear_odds = (now - old_ot).total_seconds() > ODDS_API_IO_ODDS_STALE_AFTER
+                        except (TypeError, ValueError):
+                            should_clear_odds = True
 
                 if should_clear_odds:
                     new_home_odds = new_draw_odds = new_away_odds = None
@@ -1227,6 +1235,281 @@ def fetch_from_okooo():
     ]
 
 
+def _huangguan_request(url=None):
+    import ssl
+
+    url = (url or HUANGGUAN_URL).rstrip("/") + "/"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Referer": "https://www.zuqiudi.com/",
+        },
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT, context=ctx) as resp:
+            raw = resp.read()
+        for encoding in ("utf-8", "gb18030", "gbk"):
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise ExternalApiError(_http_error_message("皇冠指数", url, e)) from e
+    except Exception as e:
+        raise ExternalApiError(f"皇冠指数请求失败: {_redact_url(url)} | {e}") from e
+
+
+def _normalize_match_text(value):
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", str(value or "").strip().lower())
+
+
+def _match_text_score(left, right, aliases=None):
+    left_norm = _normalize_match_text(left)
+    right_norm = _normalize_match_text(right)
+    if not left_norm or not right_norm:
+        return 0
+
+    candidates = [left_norm]
+    if aliases:
+        for alias in aliases.get(left, []) + aliases.get(str(left).lower(), []):
+            alias_norm = _normalize_match_text(alias)
+            if alias_norm and alias_norm not in candidates:
+                candidates.append(alias_norm)
+
+    best = 0
+    for candidate in candidates:
+        if candidate == right_norm or candidate in right_norm or right_norm in candidate:
+            return 100
+        best = max(best, int(difflib.SequenceMatcher(None, candidate, right_norm).ratio() * 100))
+    return best
+
+
+def _parse_huangguan_date(text):
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", str(text or ""))
+    return match.group(1) if match else ""
+
+
+def _parse_huangguan_html(html):
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    rows = []
+    current_date = ""
+    for tr in soup.select("div#Main tr"):
+        tds = tr.find_all("td")
+        if len(tds) == 1 and tds[0].get("colspan") == "15":
+            current_date = _parse_huangguan_date(tds[0].get_text(" ", strip=True))
+            continue
+        if len(tds) != 15 or tr.get("class") not in (["tr1"], ["tr2"]):
+            continue
+
+        start_time = tds[0].get_text(" ", strip=True)
+        league = tds[1].get_text(" ", strip=True)
+        home = tds[2].get_text(" ", strip=True)
+        away = tds[3].get_text(" ", strip=True)
+        home_odds = _to_decimal(tds[4].get_text(" ", strip=True))
+        draw_odds = _to_decimal(tds[5].get_text(" ", strip=True))
+        away_odds = _to_decimal(tds[6].get_text(" ", strip=True))
+        if not (current_date and start_time and league and home and away and home_odds and draw_odds and away_odds):
+            continue
+
+        source_id = ""
+        first_odds_id = tds[4].get("id") or ""
+        if first_odds_id:
+            source_id = first_odds_id.split("_")[1] if "_" in first_odds_id else first_odds_id
+
+        rows.append({
+            "source_id": source_id,
+            "match_date": current_date,
+            "start_time": start_time[:5],
+            "league": league,
+            "home_team": home,
+            "away_team": away,
+            "home_odds": home_odds,
+            "draw_odds": draw_odds,
+            "away_odds": away_odds,
+        })
+    return rows
+
+
+def _fetch_jingcai_matches_for_huangguan():
+    for label, fetcher in [
+        ("澳客", fetch_from_okooo_jingcai),
+        ("主接口", fetch_from_20002028_jingcai),
+        ("体彩", fetch_from_sporttery_jingcai),
+    ]:
+        try:
+            matches = fetcher()
+        except ExternalApiError as e:
+            print(f"  {label}竞彩接口不可用: {e}")
+            matches = None
+        if matches:
+            return matches, label
+    return None, None
+
+
+def _match_huangguan_row(jc_match, huangguan_rows):
+    jc_dt = _parse_sporttery_dt(jc_match)
+    if not jc_dt:
+        return None
+
+    best = (0, None)
+    for row in huangguan_rows:
+        try:
+            row_dt = datetime.datetime.strptime(
+                f"{row.get('match_date', '')} {row.get('start_time', '')}",
+                "%Y-%m-%d %H:%M",
+            )
+        except (TypeError, ValueError):
+            continue
+
+        diff_minutes = abs((row_dt - jc_dt).total_seconds()) / 60
+        if diff_minutes > 120:
+            continue
+
+        league_score = _match_text_score(
+            jc_match.get("leagueAbbName") or jc_match.get("leagueAllName"),
+            row.get("league"),
+            LEAGUE_ALIASES,
+        )
+        home_score = _match_text_score(
+            jc_match.get("homeTeamAllName") or jc_match.get("homeTeamAbbName"),
+            row.get("home_team"),
+            TEAM_ALIASES,
+        )
+        away_score = _match_text_score(
+            jc_match.get("awayTeamAllName") or jc_match.get("awayTeamAbbName"),
+            row.get("away_team"),
+            TEAM_ALIASES,
+        )
+        reverse_home_score = _match_text_score(
+            jc_match.get("homeTeamAllName") or jc_match.get("homeTeamAbbName"),
+            row.get("away_team"),
+            TEAM_ALIASES,
+        )
+        reverse_away_score = _match_text_score(
+            jc_match.get("awayTeamAllName") or jc_match.get("awayTeamAbbName"),
+            row.get("home_team"),
+            TEAM_ALIASES,
+        )
+        if reverse_home_score + reverse_away_score > home_score + away_score:
+            home_score, away_score = 0, 0
+
+        if home_score < 60 or away_score < 60:
+            continue
+
+        time_score = max(0, 30 - int(diff_minutes))
+        score = league_score + home_score + away_score + time_score
+        if score > best[0]:
+            best = (score, row)
+
+    return best[1] if best[0] >= 180 else None
+
+
+def _jingcai_match_key(jc_match):
+    return (
+        str(jc_match.get("matchDate") or "")[:10],
+        str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
+        str(jc_match.get("matchTime") or "")[:5],
+    )
+
+
+def _match_row_key(row):
+    return (
+        str(row.get("match_date") or "")[:10],
+        str(row.get("match_no") or "")[-3:],
+        str(row.get("start_time") or "")[:5],
+    )
+
+
+def _row_primary_odds(row):
+    home = row.get("home_odds")
+    draw = row.get("draw_odds")
+    away = row.get("away_odds")
+    if home and draw and away:
+        return {
+            "home": home,
+            "draw": draw,
+            "away": away,
+        }
+    return None
+
+
+def fetch_from_zuqiudi_huangguan():
+    """从足球帝皇冠页提取即时欧赔，并与竞彩赛程合并。"""
+    jingcai_matches, jingcai_source_label = _fetch_jingcai_matches_for_huangguan()
+    if not jingcai_matches:
+        return None
+
+    try:
+        huangguan_rows = _parse_huangguan_html(_huangguan_request())
+    except ExternalApiError as e:
+        print(f"  皇冠指数接口不可用，继续返回竞彩列表: {e}")
+        huangguan_rows = []
+
+    matches = []
+    crown_matched_count = 0
+    supplement_map = {}
+    supplement_count = 0
+
+    unmatched_jingcai = []
+    for jc in jingcai_matches:
+        huangguan_row = _match_huangguan_row(jc["raw"], huangguan_rows) if huangguan_rows else None
+        key = _jingcai_match_key(jc["raw"])
+        primary = None
+        if huangguan_row:
+            primary = {
+                "home": huangguan_row["home_odds"],
+                "draw": huangguan_row["draw_odds"],
+                "away": huangguan_row["away_odds"],
+            }
+            crown_matched_count += 1
+        else:
+            unmatched_jingcai.append((key, jc))
+        supplement_map[key] = primary
+
+    if unmatched_jingcai:
+        odds_rows = fetch_from_odds_api_io() or []
+        odds_map = {}
+        for row in odds_rows:
+            primary = _row_primary_odds(row)
+            if primary:
+                odds_map[_match_row_key(row)] = primary
+        for key, jc in unmatched_jingcai:
+            if supplement_map.get(key):
+                continue
+            odds_primary = odds_map.get(key)
+            if odds_primary:
+                supplement_map[key] = odds_primary
+                supplement_count += 1
+
+    for jc in jingcai_matches:
+        key = _jingcai_match_key(jc["raw"])
+        matches.append(
+            _sporttery_row(
+                jc["raw"],
+                jc["had"],
+                primary=supplement_map.get(key),
+                clear_stale_odds=True,
+                force_clear_odds=True,
+                preserve_missing=True,
+            )
+        )
+
+    print(
+        f"  皇冠采集: {jingcai_source_label} {len(jingcai_matches)} 场, "
+        f"皇冠匹配 {crown_matched_count} 场, Odds补充 {supplement_count} 场"
+    )
+    return matches
+
+
 def _jingcai_match_from_20002028(row):
     had = {
         "home": _to_decimal(_pick_source_field(row, "jingcai_home", "jc_home", "home_jingcai", "spf_home")),
@@ -1278,7 +1561,7 @@ def fetch_from_20002028_jingcai():
     return matches or None
 
 
-def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False, preserve_missing=False):
+def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False, force_clear_odds=False, preserve_missing=False):
     now_str = now_bj().strftime("%Y-%m-%d %H:%M:%S")
     row = {
         "match_no": str(jc_match.get("matchNumStr") or jc_match.get("matchNum") or "")[-3:],
@@ -1296,6 +1579,7 @@ def _sporttery_row(jc_match, had, primary=None, clear_stale_odds=False, preserve
         "jingcai_draw": had["draw"],
         "jingcai_away": had["away"],
         "clear_stale_odds": clear_stale_odds,
+        "force_clear_odds": force_clear_odds,
         "full_snapshot": True,
         "preserve_missing": preserve_missing,
     }
@@ -1588,6 +1872,12 @@ def collect_data():
                 print("  已使用主接口完成本轮 fallback 采集")
                 return True
             print("⚠️ 主接口 fallback 也不可用，跳过本轮采集")
+            return False
+        return ok
+    elif source == "huangguan":
+        ok = collect_real_data(fetch_from_zuqiudi_huangguan)
+        if not ok:
+            print("⚠️ 皇冠数据源不可用，跳过本轮采集（不 fallback 模拟数据）")
             return False
         return ok
     elif source == "mock":

@@ -437,7 +437,7 @@ function renderSourceSwitch() {
   }
   wrap.innerHTML = sources.map(s => {
     const active = s.key === dataSourceState.active;
-    const label = s.key === '20002028' ? '主' : s.key === 'odds_api_io' ? '欧' : s.key === 'okooo' ? '澳' : '模';
+    const label = s.key === '20002028' ? '主' : s.key === 'odds_api_io' ? '欧' : s.key === 'huangguan' ? '皇' : s.key === 'okooo' ? '澳' : '模';
     const cls = ['source-btn', active ? 'active' : '', !s.configured ? 'warning' : ''].filter(Boolean).join(' ');
     const title = `${s.name}${s.configured ? '' : '：未配置 API Key'}`;
     return `<button class="${cls}" title="${title}" onclick="switchDataSource('${s.key}')" ${active ? 'disabled' : ''}>${label}</button>`;
@@ -546,6 +546,7 @@ function updateMatches(matches) {
     return;
   }
   const now = new Date();
+  const oddsSourceLabel = dataSourceState.active === 'huangguan' ? '皇冠' : '欧盘';
   grid.innerHTML = matches.map(m => {
     const hh = m.jingcai_home && m.home_odds && m.jingcai_home > m.home_odds;
     const hd = m.jingcai_draw && m.draw_odds && m.jingcai_draw > m.draw_odds;
@@ -566,14 +567,14 @@ function updateMatches(matches) {
     const diffTitle = (label, pct) => {
       if (pct == null) return `缺少${label}对比赔率`;
       const abs = Math.abs(pct).toFixed(2);
-      if (pct > 0) return `竞彩${label}比欧盘${label}高了 ${abs}%`;
-      if (pct < 0) return `竞彩${label}比欧盘${label}低了 ${abs}%`;
-      return `竞彩${label}与欧盘${label}持平`;
+      if (pct > 0) return `竞彩${label}比${oddsSourceLabel}${label}高了 ${abs}%`;
+      if (pct < 0) return `竞彩${label}比${oddsSourceLabel}${label}低了 ${abs}%`;
+      return `竞彩${label}与${oddsSourceLabel}${label}持平`;
     };
     const homePct = pctDiff(m.jingcai_home, m.home_odds);
     const drawPct = pctDiff(m.jingcai_draw, m.draw_odds);
     const awayPct = pctDiff(m.jingcai_away, m.away_odds);
-    const staleBadge = m.odds_missing ? '<span class="stale-badge">未匹配欧盘</span>' : (m.odds_stale ? '<span class="stale-badge">旧数据</span>' : '');
+    const staleBadge = m.odds_missing ? `<span class="stale-badge">未匹配${oddsSourceLabel}</span>` : (m.odds_stale ? '<span class="stale-badge">旧数据</span>' : '');
     const updateText = (m.odds_time||'').substring(11,19) || '--';
     const ageText = m.odds_age_minutes != null ? ' · ' + m.odds_age_minutes + '分钟前' : '';
     const dt = new Date((m.real_date || m.match_date || '') + 'T' + (m.start_time || ''));
@@ -604,9 +605,9 @@ function updateMatches(matches) {
         开赛: ${(m.real_date||m.match_date||'').substring(5)} ${m.start_time} ${hlTag}
       </div>
       <div class="odds-row">
-        <div class="odds-item"><div class="odds-label">欧盘主</div><div class="odds-val">${fo(m.home_odds)}</div></div>
-        <div class="odds-item"><div class="odds-label">欧盘平</div><div class="odds-val">${fo(m.draw_odds)}</div></div>
-        <div class="odds-item"><div class="odds-label">欧盘客</div><div class="odds-val">${fo(m.away_odds)}</div></div>
+        <div class="odds-item"><div class="odds-label">${oddsSourceLabel}主</div><div class="odds-val">${fo(m.home_odds)}</div></div>
+        <div class="odds-item"><div class="odds-label">${oddsSourceLabel}平</div><div class="odds-val">${fo(m.draw_odds)}</div></div>
+        <div class="odds-item"><div class="odds-label">${oddsSourceLabel}客</div><div class="odds-val">${fo(m.away_odds)}</div></div>
       </div>
       <div class="odds-row">
         <div class="odds-item"><div class="odds-label">竞彩主</div><div class="odds-val ${hh?'highlight':''}">${fo(m.jingcai_home)}${hh?' ↑':''}</div></div>
@@ -614,9 +615,9 @@ function updateMatches(matches) {
         <div class="odds-item"><div class="odds-label">竞彩客</div><div class="odds-val ${ha?'highlight':''}">${fo(m.jingcai_away)}${ha?' ↑':''}</div></div>
       </div>
       <div class="odds-diff-row">
-        <div class="odds-diff ${diffClass(homePct)}" title="${diffTitle('主胜', homePct)}">竞彩主比欧盘<strong>${diffText(homePct)}</strong></div>
-        <div class="odds-diff ${diffClass(drawPct)}" title="${diffTitle('平局', drawPct)}">竞彩平比欧盘<strong>${diffText(drawPct)}</strong></div>
-        <div class="odds-diff ${diffClass(awayPct)}" title="${diffTitle('客胜', awayPct)}">竞彩客比欧盘<strong>${diffText(awayPct)}</strong></div>
+        <div class="odds-diff ${diffClass(homePct)}" title="${diffTitle('主胜', homePct)}">竞彩主比${oddsSourceLabel}<strong>${diffText(homePct)}</strong></div>
+        <div class="odds-diff ${diffClass(drawPct)}" title="${diffTitle('平局', drawPct)}">竞彩平比${oddsSourceLabel}<strong>${diffText(drawPct)}</strong></div>
+        <div class="odds-diff ${diffClass(awayPct)}" title="${diffTitle('客胜', awayPct)}">竞彩客比${oddsSourceLabel}<strong>${diffText(awayPct)}</strong></div>
       </div>
       <div class="countdown-bar"><div class="fill" style="width:${cdPct}%"></div></div>
       <div class="card-footer">
