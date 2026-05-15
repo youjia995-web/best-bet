@@ -87,6 +87,13 @@
   .date-toggle span { color: var(--text-muted); font-size: 12px; }
   .date-section.collapsed .date-body { display: none; }
   .match-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; padding: 14px; }
+  .load-more-row { padding: 0 14px 14px; text-align: center; }
+  .load-more-btn {
+    min-height: 34px; padding: 7px 18px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: rgba(255,255,255,0.04);
+    color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 13px;
+  }
+  .load-more-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
   .match-card {
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: var(--radius-sm); padding: 15px; transition: border-color 0.2s;
@@ -259,11 +266,18 @@
 </main>
 
 <script>
+const DATA_REFRESH_SECONDS = 60;
+const MATCH_REFRESH_CYCLES = 5;
+const MATCH_RENDER_BATCH = 60;
 let latestStats = {};
 const openDateGroups = new Set();
+const dateRenderLimits = new Map();
 let initializedGroups = false;
-let countdown = 30;
+let countdown = DATA_REFRESH_SECONDS;
 let lastFetchHadError = false;
+let cachedMatches = [];
+let isFetching = false;
+let refreshCycles = 0;
 
 function tick() {
   const now = new Date();
@@ -315,21 +329,27 @@ async function loadBeidanMatches(stats) {
   return matches || [];
 }
 
-async function fetchData() {
+async function fetchData(options = {}) {
+  const includeMatches = Boolean(options.includeMatches);
+  if (isFetching) return;
+  isFetching = true;
   lastFetchHadError = false;
-  Promise.all([
-    fetchJson('/api/beidan/changes', []),
-    fetchJson('/api/beidan/stats', {}),
-    fetchJson('/api/beidan/value-bets', {value_matches: []}),
-    fetchJson('/api/beidan/backtest', []),
-    fetchJson('/api/beidan/single-bet', []),
-    fetchJson('/api/beidan/fall-bet', []),
-    fetchJson('/api/beidan/draw-bet', [])
-  ]).then(async ([changes, stats, valueBets, backtest, singleBet, fallBet, drawBet]) => {
-    const matches = await loadBeidanMatches(stats);
+  try {
+    const [changes, stats, valueBets, backtest, singleBet, fallBet, drawBet] = await Promise.all([
+      fetchJson('/api/beidan/changes', []),
+      fetchJson('/api/beidan/stats', {}),
+      fetchJson('/api/beidan/value-bets', {value_matches: []}),
+      fetchJson('/api/beidan/backtest', []),
+      fetchJson('/api/beidan/single-bet', []),
+      fetchJson('/api/beidan/fall-bet', []),
+      fetchJson('/api/beidan/draw-bet', [])
+    ]);
     latestStats = stats || {};
     updateStats(stats);
-    updateMatches(matches);
+    if (includeMatches || !cachedMatches.length) {
+      cachedMatches = await loadBeidanMatches(stats);
+      updateMatches(cachedMatches);
+    }
     updateValueBets(valueBets);
     updateBacktest2x1(backtest);
     renderBacktestTable(singleBet, 'table-single', 'profit-single', 'single-bet');
@@ -337,10 +357,12 @@ async function fetchData() {
     renderBacktestTable(drawBet, 'table-draw', 'profit-draw', 'draw-bet');
     updateChanges(changes);
     document.getElementById('statusLabel').textContent = lastFetchHadError ? '部分接口失败' : '运行中';
-  }).catch(() => {
+  } catch (error) {
     document.getElementById('statusLabel').textContent = '加载失败';
     document.getElementById('matchGroups').innerHTML = '<div class="no-data">北单接口暂时不可用，请稍后刷新或手动采集</div>';
-  });
+  } finally {
+    isFetching = false;
+  }
 }
 
 function updateStats(stats) {
@@ -351,7 +373,7 @@ function updateStats(stats) {
   document.getElementById('lastUpdate').textContent = stats.latest_odds_time ? stats.latest_odds_time.substring(5, 16) : '--';
   const age = stats.odds_age_minutes;
   document.getElementById('freshStatus').textContent = age == null ? '暂无赔率时间' : `${age} 分钟前更新`;
-  document.getElementById('nextLabel').textContent = `下次页面刷新 ${countdown} 秒`;
+  document.getElementById('nextLabel').textContent = `下次轻量刷新 ${countdown} 秒`;
 }
 
 function updateMatches(matches) {
@@ -375,13 +397,22 @@ function updateMatches(matches) {
   });
   wrap.innerHTML = Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([date, items]) => {
     const open = openDateGroups.has(date);
-    const body = items.map(renderMatchCard).join('');
+    let body = '';
+    if (open) {
+      const limit = dateRenderLimits.get(date) || MATCH_RENDER_BATCH;
+      const visibleItems = items.slice(0, limit);
+      const more = items.length - visibleItems.length;
+      const moreButton = more > 0
+        ? `<div class="load-more-row"><button class="load-more-btn" data-date="${escapeHtml(date)}" onclick="showMoreDate(this.dataset.date)">再显示 ${Math.min(MATCH_RENDER_BATCH, more)} 场，剩余 ${more} 场</button></div>`
+        : '';
+      body = `<div class="match-grid">${visibleItems.map(renderMatchCard).join('')}</div>${moreButton}`;
+    }
     return `<section class="date-section ${open ? '' : 'collapsed'}" data-date="${escapeHtml(date)}">
-      <button class="date-toggle" onclick="toggleDateGroup('${escapeHtml(date)}')">
+      <button class="date-toggle" data-date="${escapeHtml(date)}" onclick="toggleDateGroup(this.dataset.date)">
         <strong>${escapeHtml(date)}</strong>
-        <span>${items.length} 场 · ${open ? '点击折叠' : '点击展开'}</span>
+        <span>${items.length} 场 · ${open ? `已显示 ${Math.min(dateRenderLimits.get(date) || MATCH_RENDER_BATCH, items.length)} 场` : '点击展开'}</span>
       </button>
-      <div class="date-body"><div class="match-grid">${body}</div></div>
+      <div class="date-body">${body}</div>
     </section>`;
   }).join('');
 }
@@ -429,9 +460,19 @@ function renderMatchCard(m) {
 }
 
 function toggleDateGroup(date) {
-  if (openDateGroups.has(date)) openDateGroups.delete(date);
-  else openDateGroups.add(date);
-  loadBeidanMatches(latestStats).then(updateMatches);
+  if (openDateGroups.has(date)) {
+    openDateGroups.delete(date);
+  } else {
+    openDateGroups.add(date);
+    if (!dateRenderLimits.has(date)) dateRenderLimits.set(date, MATCH_RENDER_BATCH);
+  }
+  updateMatches(cachedMatches);
+}
+
+function showMoreDate(date) {
+  const current = dateRenderLimits.get(date) || MATCH_RENDER_BATCH;
+  dateRenderLimits.set(date, current + MATCH_RENDER_BATCH);
+  updateMatches(cachedMatches);
 }
 
 function updateValueBets(data) {
@@ -556,7 +597,7 @@ function setResult(type, id, result) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `result=${result}&password=${encodeURIComponent(pwd)}`
   }).then(r => r.json()).then(data => {
-    if (data.success) fetchData();
+    if (data.success) fetchData({ includeMatches: false });
     else if (data.error) alert(data.error);
   });
 }
@@ -564,24 +605,30 @@ function deleteItem(type, id) {
   const pwd = verifyPassword();
   if (!pwd || !confirm('确定删除这条记录？')) return;
   fetch(`/api/beidan/${type}/${id}?password=${encodeURIComponent(pwd)}`, { method: 'DELETE' })
-    .then(r => r.json()).then(data => { if (data.success) fetchData(); else if (data.error) alert(data.error); });
+    .then(r => r.json()).then(data => { if (data.success) fetchData({ includeMatches: false }); else if (data.error) alert(data.error); });
 }
 function triggerCollect() {
   document.getElementById('statusLabel').textContent = '采集中...';
   fetchJson('/api/beidan/collect', { success: false }).then(d => {
     document.getElementById('statusLabel').textContent = d.success ? '采集完成' : '采集失败';
-    fetchData();
+    fetchData({ includeMatches: true });
   });
 }
 
 setInterval(() => {
   countdown--;
-  if (countdown <= 0) countdown = 30;
-  document.getElementById('nextLabel').textContent = `下次页面刷新 ${countdown} 秒`;
+  if (countdown <= 0) countdown = DATA_REFRESH_SECONDS;
+  document.getElementById('nextLabel').textContent = `下次轻量刷新 ${countdown} 秒`;
 }, 1000);
 
-fetchData();
-setInterval(fetchData, 30000);
+fetchData({ includeMatches: true });
+setInterval(() => {
+  countdown = DATA_REFRESH_SECONDS;
+  if (!document.hidden) {
+    refreshCycles += 1;
+    fetchData({ includeMatches: refreshCycles % MATCH_REFRESH_CYCLES === 0 });
+  }
+}, DATA_REFRESH_SECONDS * 1000);
 </script>
 </body>
 </html>
